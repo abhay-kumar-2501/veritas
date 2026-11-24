@@ -189,7 +189,7 @@ def verdict_panel(v: Verdict, company: str, score_band: str) -> str:
         )
     if v.unchecked:
         extras += (
-            '<div class="vx-verdict-row is-na"><span class="vx-label">Could not check</span>'
+            '<div class="vx-verdict-row is-na"><span class="vx-label">Not checked</span>'
             f"<span>{esc('; '.join(v.unchecked))}</span></div>"
         )
     return one_line(

@@ -760,7 +760,8 @@ def score_panel(
     coverage = f"{num}/{den}" if den else "—"
     meta = (
         '<div class="vx-fact"><span class="vx-label vx-term" tabindex="0" data-tip="How many '
-        "of the scored checks could actually be run for this company. Checks that could not "
+        "of the scored checks could be run for this company (a check with nothing to report "
+        "still counts as run). Checks that could not "
         'run are listed, never counted as a pass.">Coverage</span>'
         f"<b>{esc(coverage)}</b></div>"
         f'<div class="vx-fact"><span class="vx-label">Modules</span><b>{esc(k)} of 3 modules '

@@ -193,15 +193,15 @@ def render_overview(result: Any) -> None:
         (
             "Where a statement and the numbers sit uneasily",
             contra,
-            "Management's statement and the numbers for the same period point in different "
-            "directions. Latest period first." + scope,
-            ("No contradictions", "No paired statement diverges from the numbers at this filter."),
+            "A management statement paired with a flagged measure for the same period. "
+            "Latest period first." + scope,
+            ("Nothing here", "No paired statement sits next to a flagged measure at this filter."),
         ),
         (
             "Flags with no paired statement",
             unaddressed,
             "Accounting flags with no matching management statement." + scope,
-            ("No unaddressed divergences", "Every flag at this filter has a paired statement."),
+            ("Nothing here", "Every flag at this filter has a paired statement."),
         ),
         (
             "Statements next to unflagged numbers",

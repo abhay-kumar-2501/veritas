@@ -21,7 +21,7 @@ from datetime import date, datetime
 from typing import Any
 
 from veritas.engine.narrative import _has_no_data
-from veritas.ui.components import as_list, fmt_money, get, human_reason
+from veritas.ui.components import as_list, fmt_money, get
 
 # ---------------------------------------------------------------------------
 # Vocabulary
@@ -388,7 +388,7 @@ def incentive_plain(finding: Any) -> str | None:
         if m:
             sbc, fcf = _money_value(m.group(1)), _money_value(m.group(2))
             if sbc is not None and fcf is not None and fcf > 0:
-                cmp = "more than" if sbc > fcf else f"equal to {sbc / fcf * 100:,.0f}% of"
+                cmp = "more than" if sbc > fcf else f"equal to about {sbc / fcf * 100:,.0f}% of"
                 parts.append(
                     f"{m.group(1)} of stock-based pay to all employees, {cmp} the "
                     f"{m.group(2)} of free cash flow the business produced"
@@ -449,18 +449,36 @@ def edit_plain(edit: Mapping[str, Any]) -> str:
 
 
 _REASON_PLAIN: tuple[tuple[str, str], ...] = (
-    ("immaterial", "customer balances are under 2% of yearly sales, too small to test"),
-    ("no inventory tag", "the inventory figure isn't reported under a standard tag we can read"),
+    ("receivables immaterial", "customer balances are under 2% of yearly sales, too small to test"),
+    ("inventory immaterial", "inventory is under 2% of yearly cost of sales, too small to test"),
+    (
+        "capitalized software immaterial",
+        "software costs recorded as assets are under 1% of yearly sales, too small to test",
+    ),
+    ("no inventory tag", "no inventory figure found in the company's data"),
     ("capitalized software not tagged", "the company doesn't report this figure separately"),
+    ("4 discrete quarters required", "not enough quarters of data to cover a full year"),
+    ("not tagged", "a figure the check needs isn't in the company's data"),
+    ("unavailable", "a figure the check needs isn't in the company's data"),
 )
+_REASON_FALLBACK = "the figures needed aren't available"
 
 
 def _reason_plain(reason: Any) -> str:
+    """Plain reason for a check that could not run. Unknown engine text is never shown
+    raw here; the technical reason stays on the Ratios tab."""
     low = str(reason or "").lower()
     for key, text in _REASON_PLAIN:
         if key in low:
             return text
-    return human_reason(reason) or "the figures needed aren't reported"
+    return _REASON_FALLBACK
+
+
+def _no_data(check: Any) -> bool:
+    try:
+        return _has_no_data(check)
+    except (AttributeError, TypeError):  # dict-form results (tests, fixtures)
+        return False
 
 
 @dataclass(frozen=True)
@@ -596,7 +614,7 @@ def verdict(result: Any, edits: Sequence[Mapping[str, Any]] = ()) -> Verdict:
             continue
         state = str(get(k, "state"))
         if state == "COMPUTED" and str(get(k, "severity")) == "NO_FLAG":
-            if _has_no_data(k):
+            if _no_data(k):
                 unchecked.append(f"{cp.name} (nothing reported to check)")
             else:
                 good.append(cp.name)

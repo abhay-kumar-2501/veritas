@@ -153,3 +153,4 @@ Goal: a reader with no finance background understands what VERITAS does and what
   - Redline defaults to "Material edits only".
   - On Ratios, the explainer sits above the formula.
   - Footnote explanations are keyed by (form, sentence).
+- **Re-check (N1).** Plain "could not check" reasons are keyed per engine reason (receivables, inventory and software materiality gates; missing tag; missing quarters). Unknown engine text falls back to a generic plain phrase instead of showing raw. The row is labelled "Not checked", and the Coverage tip notes that a check with nothing to report still counts as run.

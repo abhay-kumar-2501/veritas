@@ -216,7 +216,7 @@ def test_b3_c1_compares_amounts_correctly() -> None:
     }
     s1, s2 = plain.incentive_plain(more), plain.incentive_plain(half)
     assert s1 and "more than the $16M" in s1 and "all employees" in s1
-    assert s2 and "equal to 60% of the $1.0B" in s2 and "more than" not in s2
+    assert s2 and "equal to about 60% of the $1.0B" in s2 and "more than" not in s2
     for s in (s1, s2):
         assert "it paid" not in s and "often leaves out" not in s
         assert "did not check what this company's figure excludes" in s
@@ -256,3 +256,36 @@ def test_trend_uses_displayed_values() -> None:
     assert plain._trend(119.33, 105.63, "days") == "up 13 days from"
     assert plain._trend(40.83, 40.0, "days") == "up 1 day from"
     assert plain._trend(40.2, 39.9, "days") == "about the same as"
+
+
+@pytest.mark.parametrize(
+    ("reason", "expected"),
+    [
+        ("receivables immaterial (AR < 2% of TTM revenue)", "customer balances"),
+        ("inventory immaterial (inventory < 2% of TTM cost of sales)", "inventory is under 2%"),
+        ("capitalized software immaterial (< 1% of TTM revenue)", "under 1% of yearly sales"),
+        ("no inventory tag reported", "no inventory figure"),
+        ("capitalized software not tagged", "doesn't report this figure separately"),
+        ("TTM net income unavailable (4 discrete quarters required)", "not enough quarters"),
+        ("Assets not tagged at 2026-06-30", "isn't in the company's data"),
+        ("TTM revenue unavailable for the materiality gate", "isn't in the company's data"),
+        ("financial issuer", "the figures needed aren't available"),
+    ],
+)
+def test_n1_each_engine_reason_gets_its_own_plain_text(reason: str, expected: str) -> None:
+    out = plain._reason_plain(reason)
+    assert expected in out
+    if "inventory" in reason or "software" in reason:
+        assert "customer" not in out
+
+
+def test_verdict_accepts_dict_results() -> None:
+    check = {
+        "check_id": "A5_RESTRUCT",
+        "state": "COMPUTED",
+        "severity": "NO_FLAG",
+        "outputs": {},
+        "inputs": {},
+    }
+    v = plain.verdict({"ticker": "XYZ", "modules": {"A": {"checks": [check], "findings": []}}})
+    assert v.good == ("Repeated restructuring costs",)
