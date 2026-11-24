@@ -14,7 +14,13 @@ from pypdf import PdfReader
 
 from tests.fixtures.sample_result import sample_result
 from veritas.config import DISCLAIMER
-from veritas.export.pdf_tearsheet import _ranked_findings, build_pdf, pdf_filename
+from veritas.export.pdf_tearsheet import (
+    _points,
+    _ranked_findings,
+    _safe,
+    build_pdf,
+    pdf_filename,
+)
 from veritas.models import AnalysisResult, ModuleResult, ScoreBreakdown
 
 BANNED = ("fraud", "manipulation", "misleading", "deceptive", "stuffing", "cooking the books")
@@ -202,3 +208,61 @@ def test_seed_tickers_two_pages(ticker: str) -> None:
     assert len(pages) == 2
     for text in pages:
         assert _norm(DISCLAIMER) in text
+
+
+_SEED_OK = (_SEED / "manifest.json").exists() and _pipeline_available()
+_needs_seed = pytest.mark.skipif(not _SEED_OK, reason="seed_cache or veritas.pipeline unavailable")
+
+
+def test_unscored_categories_zero_points() -> None:
+    r = sample_result(0)
+    f = r.modules["A"].findings[0]
+    for cat in ("accounting_prior_period", "footnotes_10q", "claims_consistent"):
+        assert _points(dataclasses.replace(f, category=cat), r) == 0
+
+
+def test_a3_halving_synthetic() -> None:
+    r = sample_result(0)
+    a3 = next(f for f in r.modules["A"].findings if f.check and f.check.check_id == "A3_ACCRUALS")
+    a1 = next(f for f in r.modules["A"].findings if f.check and f.check.check_id == "A1_DSO")
+    assert a1.severity == "CRITICAL" and a3.severity == "WARNING"
+    assert _points(a3, r) == 2  # 5 // 2, same period as A1
+    assert _points(a1, r) == 12
+
+
+def test_safe_greek_and_math() -> None:
+    out = _safe("\u0394DSO = DSO \u2212 prior \u2265 5 \u00d7 x \u2264 y \u2192 z \u2026")
+    assert "?" not in out and out.startswith("dDSO")
+
+
+@_needs_seed
+@pytest.mark.parametrize("ticker", SEEDS)
+def test_seed_points_and_glyphs(ticker: str) -> None:
+    from veritas.pipeline import analyze
+
+    r = analyze(ticker, offline=True)
+    deductions = dict(r.score.deductions)
+    for f in _ranked_findings(r):
+        pts = _points(f, r)
+        if pts:
+            assert pts <= deductions.get(f.category, 0), (f.title, pts)
+    ranked = _ranked_findings(r)
+    flags = [f.category in ("accounting", "footnotes", "hedging", "incentives") for f in ranked]
+    assert flags == sorted(flags, reverse=True)  # scored findings first
+    for mod in r.modules.values():
+        for c in mod.checks:
+            assert "?" not in _safe(c.formula) or "?" in c.formula
+            assert "?" not in _safe(c.title) or "?" in c.title
+        for f in mod.findings:
+            assert "?" not in _safe(f.title) or "?" in f.title
+    text = " ".join(_pages(build_pdf(r)))
+    assert "ACCOUNTING_PRIOR_PERIOD" not in text
+
+
+@_needs_seed
+def test_nvda_accounting_points_sum() -> None:
+    from veritas.pipeline import analyze
+
+    r = analyze("NVDA", offline=True)
+    total = sum(_points(f, r) for f in r.modules["A"].findings)
+    assert total == dict(r.score.deductions)["accounting"]

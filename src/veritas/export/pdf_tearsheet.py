@@ -10,6 +10,7 @@ from __future__ import annotations
 import difflib
 import io
 import re
+import unicodedata
 from collections.abc import Callable, Iterable, Sequence
 from datetime import date, datetime
 from typing import Any
@@ -98,9 +99,39 @@ _GLYPH_MAP = {
     " ": " ",
     " ": " ",
     "≈": "~",
-    "·": "·",
+    "Δ": "d",
+    "δ": "d",
+    "Σ": "sum",
+    "σ": "sd",
+    "≠": "!=",
+    "≪": "<<",
+    "≫": ">>",
+    "∑": "sum",
+    "√": "sqrt",
+    "∞": "inf",
+    "⁻": "-",
+    "¹": "1",
+    "₁": "1",
+    "₀": "0",
+    "‒": "-",
+    "―": "-",
+    "✓": "ok",
 }
 _CTRL_RE = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
+
+
+def _encodable(ch: str) -> bool:
+    try:
+        ch.encode("cp1252")
+    except UnicodeEncodeError:
+        return False
+    return True
+
+
+def _fallback_char(ch: str) -> str:
+    """Best-effort ASCII for a glyph the built-in fonts cannot draw (accents folded)."""
+    folded = unicodedata.normalize("NFKD", ch).encode("ascii", "ignore").decode("ascii")
+    return folded or "?"
 
 
 def _safe(text: object) -> str:
@@ -109,6 +140,7 @@ def _safe(text: object) -> str:
     for k, v in _GLYPH_MAP.items():
         s = s.replace(k, v)
     s = _CTRL_RE.sub(" ", s)
+    s = "".join(ch if ord(ch) < 128 or _encodable(ch) else _fallback_char(ch) for ch in s)
     return s.encode("cp1252", errors="replace").decode("cp1252")
 
 
@@ -121,7 +153,11 @@ def _clip(text: str, limit: int) -> str:
     text = " ".join(text.split())
     if len(text) <= limit:
         return text
-    return text[: max(0, limit - 1)].rstrip() + "…"
+    cut = text[: max(0, limit - 1)]
+    sp = cut.rfind(" ")
+    if sp >= int(limit * 0.5):
+        cut = cut[:sp]
+    return cut.rstrip(" ,;:-") + "…"
 
 
 def _num(value: float | None) -> str:
@@ -246,11 +282,45 @@ def _sev_label(sev: str | None) -> str:
 # ---------------------------------------------------------------------------
 # Data selection
 # ---------------------------------------------------------------------------
-def _points(f: Finding) -> int:
-    if f.module == "A":
-        return ti("PTS_ACCOUNTING_CRIT") if f.severity == "CRITICAL" else ti("PTS_ACCOUNTING_WARN")
-    if f.module == "B":
+_CATEGORY_LABEL = {
+    "accounting": "accounting",
+    "accounting_prior_period": "prior period",
+    "footnotes": "footnotes",
+    "footnotes_10q": "10-Q footnotes",
+    "hedging": "hedging",
+    "incentives": "incentives",
+    "claims_consistent": "claims consistent",
+}
+_SCORED_CATEGORIES = ("accounting", "footnotes", "hedging", "incentives")
+
+
+def _check_prefix(f: Finding) -> str:
+    return f.check.check_id[:2] if f.check else ""
+
+
+def _points(f: Finding, result: AnalysisResult | None = None) -> int:
+    """Points this finding contributes to the score (PRD 7.5); 0 for unscored categories."""
+    if f.category not in _SCORED_CATEGORIES or f.severity not in ("CRITICAL", "WARNING"):
+        return 0
+    if f.category == "accounting":
+        pts = ti("PTS_ACCOUNTING_CRIT") if f.severity == "CRITICAL" else ti("PTS_ACCOUNTING_WARN")
+        if _check_prefix(f) == "A3" and result is not None and f.check is not None:
+            mod = _mod(result, "A")
+            for g in mod.findings if mod else ():
+                if (
+                    g is not f
+                    and g.category == "accounting"
+                    and g.severity in ("CRITICAL", "WARNING")
+                    and _check_prefix(g) in ("A1", "A2")
+                    and g.check is not None
+                    and g.check.period_end == f.check.period_end
+                ):
+                    return pts // 2
+        return pts
+    if f.category == "footnotes":
         return ti("PTS_FOOTNOTE")
+    if f.category == "hedging":
+        return ti("PTS_HEDGING")
     return ti("PTS_INCENTIVE")
 
 
@@ -263,7 +333,13 @@ def _ranked_findings(result: AnalysisResult) -> list[Finding]:
         for f in mod.findings:
             if f.severity in ("CRITICAL", "WARNING"):
                 items.append(f)
-    items.sort(key=lambda f: (-SEVERITY_RANK.get(f.severity, 0), -_points(f)))
+    items.sort(
+        key=lambda f: (
+            f.category not in _SCORED_CATEGORIES,
+            -SEVERITY_RANK.get(f.severity, 0),
+            -_points(f, result),
+        )
+    )
     return items
 
 
@@ -457,18 +533,72 @@ def _score_box(result: AnalysisResult) -> Table:
     return t
 
 
-def _metric_line(f: Finding) -> str:
+_OUT_LABEL = {
+    "dso": "DSO",
+    "dio": "DIO",
+    "dpo": "DPO",
+    "dso_prior_year": "DSO prior yr",
+    "dio_prior_year": "DIO prior yr",
+    "delta_dso_days": "dDSO days",
+    "delta_dio_days": "dDIO days",
+    "dso_rel_change": "DSO chg",
+    "dio_rel_change": "DIO chg",
+    "accrual_ratio": "Accrual ratio",
+    "ccr": "Cash conversion",
+    "ocf_ttm_growth": "OCF growth",
+    "material_quarters_last4": "Material qtrs (L4)",
+    "material_quarters_last8": "Material qtrs (L8)",
+    "quarters_with_data_last4": "Qtrs w/ data (L4)",
+    "quarters_with_data_last8": "Qtrs w/ data (L8)",
+}
+
+
+def _out_label(key: str) -> str:
+    return _OUT_LABEL.get(key.lower(), key.replace("_", " ").strip().capitalize())
+
+
+def _fmt_out(key: str, v: float | None) -> str:
+    if v is None:
+        return "n/a"
+    k = key.lower()
+    if "quarters" in k or "count" in k or k.endswith("_points"):
+        return str(round(v))
+    if "rel_change" in k or "ratio" in k or "growth" in k:
+        return f"{v * 100:.1f}%"
+    if "ccr" in k:
+        return f"{v:.2f}x"
+    if "days" in k or k in ("dso", "dio", "dpo") or k.endswith("_prior_year"):
+        return f"{v:.1f}"
+    return _num(v)
+
+
+def _formula_head(formula: str, limit: int = 110) -> str:
+    """First sentence/clause of a formula, only if it fits whole."""
+    formula = re.sub(r"\s*\((?:WARNING|CRITICAL)[^)]*\)", "", formula)
+    head = re.split(r";\s|\.\s", formula.strip(), maxsplit=1)[0].rstrip(".")
+    return head if 0 < len(head) <= limit else ""
+
+
+def _metric_line(f: Finding, max_len: int = 210) -> str:
     chk = f.check
     if chk is None:
         return ""
     parts: list[str] = []
-    if chk.formula:
-        parts.append(chk.formula)
-    outs = [(k, v) for k, v in chk.outputs.items()][:4]
+    fh = _formula_head(chk.formula)
+    if fh:
+        parts.append(fh)
+    outs: list[str] = []
+    total = sum(len(p) + 3 for p in parts)
+    for k, v in chk.outputs.items():
+        if v is None:
+            continue
+        item = f"{_out_label(k)} {_fmt_out(k, v)}"
+        if total + len(item) + 2 > max_len or len(outs) >= 4:
+            break
+        outs.append(item)
+        total += len(item) + 2
     if outs:
-        parts.append("; ".join(f"{k}={_num(v)}" for k, v in outs))
-    if chk.period_end:
-        parts.append(f"P={_iso(chk.period_end)}")
+        parts.append(", ".join(outs))
     return " | ".join(parts)
 
 
@@ -498,10 +628,18 @@ def _finding_cites(f: Finding) -> list[Citation]:
 
 
 def _finding_block(
-    rank: int, f: Finding, detail: int, quote_cap: int = 240, max_cites: int = 2
+    result: AnalysisResult,
+    rank: int,
+    f: Finding,
+    detail: int,
+    quote_cap: int = 240,
+    max_cites: int = 2,
 ) -> Flowable:
     pill = _pill(_sev_label(f.severity))
-    cat = f"MOD {f.module} · {f.category}".upper()
+    pts = _points(f, result)
+    label = _CATEGORY_LABEL.get(f.category, f.category.replace("_", " "))
+    cat = f"MOD {f.module} · {label}".upper()
+    pts_txt = f"-{pts} pts" if pts else "unscored"
     head = Table(
         [
             [
@@ -509,13 +647,12 @@ def _finding_block(
                 pill,
                 _p(_esc(_clip(f.title, 110)), S_TITLE),
                 _p(
-                    f'<font name="Courier" color="#6B7280">{_esc(cat)}&nbsp;&nbsp;'
-                    f"-{_points(f)} pts</font>",
+                    f'<font name="Courier" color="#6B7280">{_esc(cat)}&nbsp;&nbsp;{pts_txt}</font>',
                     _style("fh", fontSize=6.6, leading=8, alignment=TA_RIGHT),
                 ),
             ]
         ],
-        colWidths=[14, 50, CONTENT_W - 14 - 50 - 128 - 8, 128],
+        colWidths=[14, 50, CONTENT_W - 14 - 50 - 170 - 8, 170],
     )
     head.setStyle(
         TableStyle(
@@ -530,15 +667,16 @@ def _finding_block(
     )
     body: list[Flowable] = [head, Spacer(1, 3)]
     quote = _finding_quote(f)
-    if detail >= 2 and f.explanation:
-        body.append(_p(_esc(_clip(f.explanation, 200)), S_SMALL))
+    metric = _metric_line(f)
+    show_expl = detail >= 2 or (detail == 1 and not quote and not metric)
+    if show_expl and f.explanation:
+        body.append(_p(_esc(_clip(f.explanation, 230)), S_SMALL))
         body.append(Spacer(1, 2))
     if quote and detail >= 1:
         body.append(_p(f"\u201c{_esc(_clip(quote, quote_cap))}\u201d", S_QUOTE))
-    metric = _metric_line(f)
     if metric and detail >= 1:
         body.append(Spacer(1, 1.5))
-        body.append(_p(_esc(_clip(metric, 230)), S_MONO))
+        body.append(_p(_esc(metric), S_MONO))
     cites = _finding_cites(f)[:max_cites]
     if cites:
         body.append(Spacer(1, 1.5))
@@ -581,7 +719,7 @@ def _findings_block(
         return out
     shown = ranked[:n_show]
     for i, f in enumerate(shown, 1):
-        out.append(_finding_block(i, f, detail, quote_cap, max_cites))
+        out.append(_finding_block(result, i, f, detail, quote_cap, max_cites))
     more = len(ranked) - len(shown)
     if more > 0:
         out.append(Spacer(1, 3))
@@ -594,7 +732,7 @@ def _findings_block(
 def _banner_line(result: AnalysisResult) -> list[Flowable]:
     if not result.banners:
         return []
-    txt = "  ·  ".join(_clip(b, 140) for b in result.banners[:2])
+    txt = "  ·  ".join(_clip(b, 260) for b in result.banners[:2])
     return [Spacer(1, 4), _p(f"<b>Notice:</b> {_esc(txt)}", S_MUTED)]
 
 
@@ -652,18 +790,29 @@ def _history_points(chk: CheckResult) -> list[tuple[str, float | None]]:
     return pts[-3:]
 
 
+_HEADLINE_KEY = {
+    "A1": "dso",
+    "A2": "dio",
+    "A3": "accrual_ratio",
+    "A5": "material_quarters_last4",
+}
+
+
 def _headline(chk: CheckResult) -> tuple[str, float | None]:
+    pref = _HEADLINE_KEY.get(chk.check_id[:2])
+    if pref is not None and pref in chk.outputs:
+        return pref, chk.outputs[pref]
     for k, v in chk.outputs.items():
         if v is not None:
             return k, v
     for k, v in chk.outputs.items():
         return k, v
-    return "", None
+    return pref or "", None
 
 
-def _cell_val(date_txt: str, value: float | None) -> list[Flowable]:
+def _cell_val(date_txt: str, value: float | None, key: str = "") -> list[Flowable]:
     return [
-        _p(_num(value) if value is not None else "n/a", S_MONO_R),
+        _p(_fmt_out(key, value) if key else _num(value), S_MONO_R),
         _p(
             f'<font color="#6B7280">{_esc(date_txt)}</font>',
             _style("cd", fontName="Courier", fontSize=5.8, leading=7, alignment=TA_RIGHT),
@@ -730,18 +879,18 @@ def _check_table(result: AnalysisResult) -> list[Flowable]:
         rows.append(
             [
                 _p(label, S_CELL),
-                _p(_esc(key or "n/a"), S_MONO),
-                _cell_val(cells[0][0], cells[0][1])
+                _p(_esc(_out_label(key) if key else "n/a"), S_MONO),
+                _cell_val(cells[0][0], cells[0][1], key)
                 if cells[0][0] or cells[0][1] is not None
                 else _p('<font color="#6B7280">&mdash;</font>', S_MONO_R),
-                _cell_val(cells[1][0], cells[1][1])
+                _cell_val(cells[1][0], cells[1][1], key)
                 if cells[1][0] or cells[1][1] is not None
                 else _p('<font color="#6B7280">&mdash;</font>', S_MONO_R),
-                _cell_val(cells[2][0], cells[2][1]),
+                _cell_val(cells[2][0], cells[2][1], key),
                 _pill(_sev_label(chk.severity), 40),
             ]
         )
-    cw = [CONTENT_W - 78 - 74 * 3 - 46 - 0, 78, 74, 74, 74, 46]
+    cw = [0, 96, 70, 70, 70, 46]
     cw[0] = CONTENT_W - sum(cw[1:])
     t = Table(rows, colWidths=cw, hAlign="LEFT")
     style = _grid_style(len(rows))
@@ -848,7 +997,7 @@ def _redline_block(result: AnalysisResult, n_edits: int, cap: int) -> list[Flowa
         out.append(_p(f"+{more} more in app", S_MUTED))
     hedge = mod.extra.get("hedging") if isinstance(mod.extra, dict) else None
     if isinstance(hedge, dict) and hedge:
-        status = str(hedge.get("status") or "n/a").upper()
+        status = str(hedge.get("label") or hedge.get("status") or "n/a")
         pr, cr = hedge.get("prior_rate"), hedge.get("current_rate")
         if isinstance(pr, (int, float)) and isinstance(cr, (int, float)):
             txt = (
@@ -865,15 +1014,23 @@ def _redline_block(result: AnalysisResult, n_edits: int, cap: int) -> list[Flowa
 def _proxy_block(result: AnalysisResult, n_metrics: int, n_flags: int) -> list[Flowable]:
     out = _section("Module C: proxy incentive metrics and flags")
     mod = _mod(result, "C")
-    if mod is None or mod.status in ("unavailable", "error", "timeout"):
-        out.append(
-            _p(_esc(_not_assessed(mod.reason if mod else None, "proxy not available")), S_MUTED)
-        )
+    extra = mod.extra if mod is not None and isinstance(mod.extra, dict) else {}
+    seen: set[tuple[str, str]] = set()
+    metrics: list[dict[str, Any]] = []
+    for m in extra.get("metrics") or ():
+        if not isinstance(m, dict):
+            continue
+        key = (str(m.get("metric") or "").upper(), str(m.get("context") or "").strip().lower())
+        if key in seen:
+            continue
+        seen.add(key)
+        metrics.append(m)
+    if mod is None or mod.status not in ("ok", "partial") or not metrics:
+        reason = mod.reason if mod else None
+        if mod is not None and not reason and mod.status in ("ok", "partial"):
+            reason = "no incentive metrics extracted"
+        out.append(_p(_esc(_not_assessed(reason, "proxy not available")), S_MUTED))
         return out
-    extra = mod.extra if isinstance(mod.extra, dict) else {}
-    metrics = [m for m in (extra.get("metrics") or ()) if isinstance(m, dict)]
-    if mod.status == "low_confidence":
-        out.append(_p("Low confidence: metrics shown for reference; no flags raised.", S_MUTED))
     if metrics:
         rows: list[list[Any]] = [
             [
@@ -902,8 +1059,6 @@ def _proxy_block(result: AnalysisResult, n_metrics: int, n_flags: int) -> list[F
         out.append(t)
         if len(metrics) > n_metrics:
             out.append(_p(f"+{len(metrics) - n_metrics} more in app", S_MUTED))
-    else:
-        out.append(_p(_esc(_not_assessed(mod.reason, "no incentive metrics extracted")), S_MUTED))
     flags = [f for f in mod.findings if f.severity != "NO_FLAG"]
     out.append(Spacer(1, 3))
     if flags:
