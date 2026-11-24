@@ -17,8 +17,9 @@ Draft entries to merge into `DECISIONS.md` (Appendix C template).
 - **Choice:** No 10-K → unsupported; SIC 6770 → shell; SIC 6000–6799 → financial, even when revenue is missing; otherwise TTM revenue missing or ≤ 0 → shell (negative revenue is treated like 0); else ordinary. Shell and unsupported issuers get `score=None` with the label `"NOT SCORED"`, and every check is NOT_APPLICABLE. `Gating` is a frozen dataclass in `engine/gating.py`, not in `models.py`, because it is not part of the AnalysisResult contract.
 - **Revisit if:** the PRD owner wants strict §7.6 ordering.
 
-### D-204 A1/A2 persistence ("previous quarter end that has data")  (2026-11-24, M2)
-- **Choice:** Walk the flow metric's discrete quarter ends before P, newest first, but only those less than 355 days (365 − tolerance) before P, so the prior-year quarter itself is never used. Take the first one where ΔDSO/ΔDIO and rel are computable, and test the raw WARNING condition there (no materiality gate). If no such quarter exists, or WARNING did not hold there, a CRITICAL-threshold result is reported as WARNING with an explicit reason.
+### D-204 A1/A2 persistence ("previous quarter end")  (2026-11-24, M2; revised after audit)
+- **Choice:** Only the quarter immediately before P counts: the flow metric's discrete quarter ending at `q.start − 1 day` (± `YOY_MATCH_TOL_DAYS`). There, the raw WARNING condition (ΔDSO/ΔDIO and rel, no materiality gate) is tested, with the balance matched within ± tolerance. If that quarter does not exist, or the comparison is not computable there (e.g. AR missing), persistence is **not** established. A CRITICAL-threshold result is then reported as WARNING with the reason "CRITICAL thresholds met but persistence not established … previous quarter end (<date>)".
+- **Superseded:** the first version searched back up to 355 days for the newest computable quarter. The audit (MAJOR-2) found this looser than PRD §7.1 ("also held at the previous quarter end").
 
 ### D-205 Order of A1/A2 gates; "no inventory tag" → NOT_APPLICABLE  (2026-11-24, M2)
 - **Choice:** Checks run in this order: (A2 only) no inventory tag in any period → NOT_APPLICABLE "no inventory tag reported" (PRD §7.1 A2 text); missing flow or balance at P → NOT_COMPUTABLE; flow ≤ 0 → NOT_COMPUTABLE; TTM flow missing → NOT_COMPUTABLE; materiality → NOT_APPLICABLE; prior-year quarter or balance missing, or prior flow ≤ 0 → NOT_COMPUTABLE. Materiality is tested before the prior-year inputs, so an immaterial balance (WMT AR) is always NOT_APPLICABLE.
@@ -33,8 +34,14 @@ Draft entries to merge into `DECISIONS.md` (Appendix C template).
 ### D-208 A3 edge cases  (2026-11-24, M2)
 - **Choice:** CCR is n/m (with an annotation) when NI_TTM ≤ 0 (`loss-making: cash conversion n/m`), when NI_TTM < 2% of TTM revenue, or when TTM revenue is missing. The "NI up YoY while OCF down ≥ 10%" CRITICAL leg belongs to the secondary test, so it is evaluated only when CCR is computed. OCF growth needs a prior OCF_TTM > 0.
 
-### D-209 A5 counting  (2026-11-24, M2)
-- **Choice:** The windows are the last 4 and 8 Revenue quarter ends ≤ P. A quarter with no restructuring value counts as "not material", since issuers do not tag a charge they did not incur; `quarters_with_data_*` exposes this. The fiscal-year leg uses the 3 latest FY periods ending ≤ P, comparing the FY restructuring fact to FY revenue. When restructuring is tagged only in 10-Ks, an annotation says quarterly counts are unavailable. No restructuring tag in any period gives COMPUTED/NO_FLAG with the reason "no restructuring tags reported" (§7.1). Impairments are shown in `inputs` only.
+### D-209 A5 counting  (2026-11-24, M2; revised after audit)
+- **Choice:** The windows are the last 4 and 8 Revenue quarter ends ≤ P.
+  - A quarter with **no restructuring fact covering it at all** is "not material", since issuers do not tag a charge they did not incur.
+  - A quarter that **is** covered by a reported YTD/FY restructuring fact but whose discrete value cannot be derived (e.g. 9M missing) is **unknown**. It gets the annotation "restructuring quarter(s) not derivable: <dates>" and the outputs `quarters_unknown_last4/8`.
+  - Severity uses known quarters only. If count + unknown could reach the WARNING or CRITICAL count, the reason says so ("non-derivable quarters could raise it to …").
+  - The fiscal-year leg uses the 3 latest consecutive fiscal years (D-214) ending ≤ P, comparing FY restructuring to FY revenue.
+  - No restructuring tag in any period gives COMPUTED/NO_FLAG with the reason "no restructuring tags reported" (§7.1).
+  - Impairments are shown in `inputs` only.
 
 ### D-210 Normalization details  (2026-11-24, M2)
 - **Choice:**
@@ -42,7 +49,8 @@ Draft entries to merge into `DECISIONS.md` (Appendix C template).
   - Several 3M facts with one end date: the latest filed wins.
   - TTM chains quarters backwards by contiguity (previous end = start − 1 day, else the closest quarter end within ± 10 days), and the 4-quarter span must fall in the FY class.
   - A TTM point takes its tag and provenance from its latest quarter. `derived`/`restated` are true if any component is.
-  - `instant(metric, end)` returns the closest instant within ± `YOY_MATCH_TOL_DAYS`. Per-period fallback means the first tag with any instant in the window wins.
+  - `instant(metric, end, tol_days=0)` is an **exact** match by default. Every current-period lookup at P (AR_end, Inventory_end, Assets_P, AP_end, goodwill, equity, cash, debt) is exact, then falls through the tag order. The ± `YOY_MATCH_TOL_DAYS` window (closest wins) is used only for prior-year instants (§7.0.8) and the previous-quarter balance in the persistence test. (Revised after audit, MINOR-3.)
+  - A1/A2 also annotate "tag changed" when the TTM flow used by the materiality gate mixes tags.
   - `fiscal_years()` uses Revenue FY facts, or the union over all duration metrics if Revenue has none.
   - Series are chronological.
   - `metrics()` keys are `"<Metric>.<instant|quarter|fy|ttm>"` and list non-empty series only.
@@ -60,5 +68,11 @@ Draft entries to merge into `DECISIONS.md` (Appendix C template).
   - Module A counts as assessed when its status is ok or partial. `unassessed` holds "Module A: accounting", "Module B: footnotes & hedging" and "Module C: proxy incentives".
   - Coverage counts only scored `A*` checks.
 
-### D-213 Appendix D #5 verification (fiscal years, Q4 reconciliation)  (2026-11-24, M2)
-- **Evidence (seed_cache, built 2026-11-24):** NVDA FY ends 2026-01-25, 2025-01-26, 2024-01-28 (364-day years; earlier years include 53-week years). WMT FY ends Jan 31; TSLA and BA FY ends Dec 31. For the 4 latest FYs of every seed ticker, derived Q4 Revenue + 9M = the reported FY exactly. Examples: NVDA FY2026 68,127M + 147,811M = 215,938M; WMT FY2026 188,913M + 517,500M = 706,413M. TTM at FY end = FY. Enforced by `tests/unit/test_accounting_seed.py`. NVDA uses `Revenues` for recent periods; WMT/TSLA use `RevenueFromContractWithCustomerExcludingAssessedTax`, which for WMT is net sales and excludes membership income, as the Appendix A order dictates.
+### D-213 Appendix D #5 verification (fiscal years, quarterly sums vs FY)  (2026-11-24, M2; revised after audit)
+- **Evidence (seed_cache, built 2026-11-24):** NVDA fiscal years end on the last Sunday of January (52/53-week years, e.g. 2026-01-25, 2025-01-26, 2024-01-28). WMT FY ends Jan 31; TSLA and BA FY ends Dec 31. For NVDA and WMT, Revenue and NetIncome, over the 3 latest consecutive fiscal years: Q1–Q3 are reported 3M facts (not derived), and Q1+Q2+Q3+Q4 equals the reported FY fact within max(0.01%, $1M). This compares the independent 3M facts with the 9M fact, so it is not tautological. Enforced by `tests/unit/test_accounting_seed.py::test_four_discrete_quarters_sum_to_fy`. NVDA uses `Revenues` for most periods; WMT/TSLA use `RevenueFromContractWithCustomerExcludingAssessedTax`, which for WMT is net sales and excludes membership income, as the Appendix A order dictates.
+- **Superseded:** the first version checked derived Q4 + 9M == FY, which holds by construction (audit MINOR-7).
+
+### D-214 Fiscal years come from annual reports and form a consecutive chain  (2026-11-24, M2; audit MAJOR-1)
+- **Question:** Some filers put trailing-twelve-month columns (350–380 days) in 10-Qs. Counting them as fiscal years let one restructuring charge plus two LTM facts satisfy A5's "each of the last 3 fiscal years" leg.
+- **Choice:** An FY-class `(tag, start, end)` key is kept only if at least one of its rows comes from `10-K`, `10-K/A` or `10-KT`. FY-class facts seen only in 10-Qs are dropped everywhere: `fy()`, Q4 derivation and `fiscal_years()`. `fiscal_years()` starts at the newest FY and chains backwards; each earlier year must end within ± `YOY_MATCH_TOL_DAYS` of the later year's `start − 1 day`. The chain stops at the first gap, so periods never overlap and "the last 3 fiscal years" are consecutive.
+- **Revisit if:** a filer reports FY totals only in a 10-KT/10-K/A pattern not covered here.

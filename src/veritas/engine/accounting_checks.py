@@ -301,15 +301,19 @@ _A2 = _DaysCfg(
 
 
 def _days_ratio(
-    nf: NormalizedFacts, cfg: _DaysCfg, period: date
+    nf: NormalizedFacts, cfg: _DaysCfg, period: date, bal_tol: int = 0
 ) -> tuple[float, float, float, float] | None:
-    """(ratio, prior ratio, Δ days, rel) at ``period`` or None if not computable."""
+    """(ratio, prior ratio, Δ days, rel) at ``period`` or None if not computable.
+
+    The balance at ``period`` is matched exactly unless ``bal_tol`` is given (used for
+    the previous-quarter persistence test); the prior-year balance uses the YoY tolerance.
+    """
     q = nf.quarter(cfg.flow, period)
-    bal = nf.instant(cfg.balance, period)
+    bal = nf.instant(cfg.balance, period, tol_days=bal_tol)
     pq = nf.yoy_quarter(cfg.flow, period)
     if q is None or bal is None or pq is None or q.value <= 0 or pq.value <= 0:
         return None
-    pbal = nf.instant(cfg.balance, pq.end)
+    pbal = nf.instant(cfg.balance, pq.end, tol_days=ti("YOY_MATCH_TOL_DAYS"))
     if pbal is None:
         return None
     assert q.start is not None and pq.start is not None
@@ -329,22 +333,19 @@ def _crit(delta: float, rel: float) -> bool:
     return delta >= t("DSO_CRIT_DAYS") and rel >= t("DSO_CRIT_REL")
 
 
-def _previous_warn(nf: NormalizedFacts, cfg: _DaysCfg, period: date) -> tuple[date | None, bool]:
-    """WARNING condition at the previous discrete quarter end that has data.
+def _previous_warn(nf: NormalizedFacts, cfg: _DaysCfg, q: MetricPoint) -> tuple[date | None, bool]:
+    """WARNING condition at the previous quarter end only (D-204).
 
-    Searches earlier quarter ends of the flow metric within the preceding 12 months
-    (strictly closer than the prior-year match) and uses the newest computable one.
+    The previous quarter is the flow quarter ending at ``q.start − 1 day`` (± tolerance).
+    If the comparison is not computable there, persistence is not established (False).
     """
-    lookback = 365 - ti("YOY_MATCH_TOL_DAYS")
-    for e in nf.quarter_ends(cfg.flow):
-        if e >= period:
-            continue
-        if (period - e).days >= lookback:
-            break
-        r = _days_ratio(nf, cfg, e)
-        if r is not None:
-            return e, _warn(r[2], r[3])
-    return None, False
+    prev = nf.previous_quarter(cfg.flow, q)
+    if prev is None:
+        return None, False
+    r = _days_ratio(nf, cfg, prev.end, bal_tol=ti("YOY_MATCH_TOL_DAYS"))
+    if r is None:
+        return prev.end, False
+    return prev.end, _warn(r[2], r[3])
 
 
 def _check_days(ctx: _Ctx, cfg: _DaysCfg) -> CheckResult:
@@ -375,7 +376,7 @@ def _check_days(ctx: _Ctx, cfg: _DaysCfg) -> CheckResult:
     pq = nf.yoy_quarter(flow, p)
     if pq is None:
         return ctx.nc(f"prior-year quarter missing ({flow})")
-    pbal = nf.instant(bal_name, pq.end)
+    pbal = nf.instant(bal_name, pq.end, tol_days=ti("YOY_MATCH_TOL_DAYS"))
     ctx.use(pq, pbal)
     ctx.inputs[f"{flow}_q_prior_year"] = pq.value
     ctx.inputs[f"{bal_name}_end_prior_year"] = pbal.value if pbal else None
@@ -383,12 +384,11 @@ def _check_days(ctx: _Ctx, cfg: _DaysCfg) -> CheckResult:
         return ctx.nc(f"prior-year {bal_name} missing at {pq.end.isoformat()}")
     if pq.value <= 0:
         return ctx.nc(f"prior-year {flow}_q ≤ 0: {name} undefined")
-    _note_tag_change(ctx, (q, pq), (bal, pbal))
+    _note_tag_change(ctx, (q, pq), (bal, pbal), (ttm,))
     r = _days_ratio(nf, cfg, p)
-    assert r is not None
-    cur, prior, delta, rel = r
-    if prior <= 0:  # pragma: no cover - _days_ratio already returns None
+    if r is None:
         return ctx.nc(f"prior-year {name} ≤ 0: relative change undefined")
+    cur, prior, delta, rel = r
     key = cfg.label
     ctx.outputs.update(
         {key: cur, f"{key}_prior_year": prior, f"delta_{key}_days": delta, f"{key}_rel_change": rel}
@@ -398,13 +398,13 @@ def _check_days(ctx: _Ctx, cfg: _DaysCfg) -> CheckResult:
     if _warn(delta, rel):
         severity = "WARNING"
         if _crit(delta, rel):
-            prev_end, prev_warn = _previous_warn(nf, cfg, p)
+            prev_end, prev_warn = _previous_warn(nf, cfg, q)
             if prev_warn:
                 severity = "CRITICAL"
             else:
                 reason = (
-                    "CRITICAL thresholds met but the WARNING condition did not hold at the "
-                    "previous quarter end"
+                    "CRITICAL thresholds met but persistence not established: the WARNING "
+                    "condition did not hold (or was not computable) at the previous quarter end"
                     + (f" ({prev_end.isoformat()})" if prev_end else " (no prior-quarter data)")
                 )
     guard, gdetails = acquisition_guard(nf, p)
@@ -577,41 +577,63 @@ def _check_a5(ctx: _Ctx) -> CheckResult:
     ends = [e for e in nf.quarter_ends("Revenue") if e <= p][:win8]
     flags: list[bool] = []
     with_data: list[bool] = []
+    unknown: list[date] = []
+    unknown_flags: list[bool] = []
     for e in ends:
         r = nf.quarter("Restructuring", e)
         rev = nf.quarter("Revenue", e)
         m = _material(r, rev)
+        # No discrete value although a YTD/FY total spans the quarter → not derivable:
+        # unknown, never silently "not material" (D-209).
+        unk = rev is None or (
+            r is None
+            and rev.start is not None
+            and nf.quarter_covered("Restructuring", rev.start, rev.end)
+        )
         flags.append(m)
+        unknown_flags.append(unk)
+        if unk:
+            unknown.append(e)
         with_data.append(r is not None and rev is not None)
         if m:
             ctx.use(r, rev)
     count4, count8 = sum(flags[:win4]), sum(flags[:win8])
+    unk4, unk8 = sum(unknown_flags[:win4]), sum(unknown_flags[:win8])
     ctx.outputs["material_quarters_last4"] = float(count4)
     ctx.outputs["material_quarters_last8"] = float(count8)
     ctx.outputs["quarters_with_data_last4"] = float(sum(with_data[:win4]))
     ctx.outputs["quarters_with_data_last8"] = float(sum(with_data[:win8]))
+    ctx.outputs["quarters_unknown_last4"] = float(unk4)
+    ctx.outputs["quarters_unknown_last8"] = float(unk8)
+    if unknown:
+        ctx.note(
+            "restructuring quarter(s) not derivable: "
+            + ", ".join(d.isoformat() for d in sorted(unknown))
+        )
 
     n_years = ti("RESTRUCT_CRIT_YEARS")
     fys = [fy for fy in nf.fiscal_years() if fy[1] <= p][:n_years]
     fy_material = 0
-    fy_with_data = 0
     for _s, e in fys:
         r_fy, rev_fy = nf.fy("Restructuring", e), nf.fy("Revenue", e)
-        if r_fy is not None and rev_fy is not None:
-            fy_with_data += 1
         if _material(r_fy, rev_fy):
             fy_material += 1
             ctx.use(r_fy, rev_fy)
     ctx.outputs["material_fiscal_years_last3"] = float(fy_material)
-    if not any(with_data) and fy_with_data:
-        ctx.note("restructuring reported in annual filings only; quarterly counts unavailable")
     years_ok = len(fys) == n_years and fy_material == n_years
     severity: Severity = "NO_FLAG"
     if count8 >= ti("RESTRUCT_CRIT_COUNT") or years_ok:
         severity = "CRITICAL"
     elif count4 >= ti("RESTRUCT_WARN_COUNT"):
         severity = "WARNING"
-    return ctx.ok(severity)
+    reason: str | None = None
+    could_crit = severity != "CRITICAL" and count8 + unk8 >= ti("RESTRUCT_CRIT_COUNT")
+    could_warn = severity == "NO_FLAG" and count4 + unk4 >= ti("RESTRUCT_WARN_COUNT")
+    if could_crit or could_warn:
+        reason = "severity uses known quarters only; non-derivable quarters could raise it to " + (
+            "CRITICAL" if could_crit else "WARNING"
+        )
+    return ctx.ok(severity, reason)
 
 
 # --------------------------------------------------------------------------
@@ -660,7 +682,7 @@ def _check_dpo(ctx: _Ctx) -> CheckResult:
     dpo = ap.value / q.value * days(q.start, q.end)
     ctx.outputs["dpo"] = dpo
     pq = nf.yoy_quarter("COGS", p)
-    pap = nf.instant("AP", pq.end) if pq else None
+    pap = nf.instant("AP", pq.end, tol_days=ti("YOY_MATCH_TOL_DAYS")) if pq else None
     prior: float | None = None
     if pq is not None and pap is not None and pq.value > 0 and pq.start is not None:
         prior = pap.value / pq.value * days(pq.start, pq.end)
@@ -703,15 +725,21 @@ def _fcf(ctx: _Ctx, with_sbc: bool) -> CheckResult:
     return ctx.ok("NO_FLAG")
 
 
-def total_debt(nf: NormalizedFacts, end: date) -> tuple[float | None, list[MetricPoint]]:
+def total_debt(
+    nf: NormalizedFacts, end: date, tol_days: int = 0
+) -> tuple[float | None, list[MetricPoint]]:
     """Appendix A approximate total debt; missing components count as 0, all missing → None."""
-    ltd = nf.instant("LongTermDebt", end)
+
+    def inst(metric: str) -> MetricPoint | None:
+        return nf.instant(metric, end, tol_days=tol_days)
+
+    ltd = inst("LongTermDebt")
     parts: list[MetricPoint | None]
     if ltd is not None:
         parts = [ltd]
     else:
-        parts = [nf.instant("LongTermDebtNoncurrent", end), nf.instant("LongTermDebtCurrent", end)]
-    parts += [nf.instant("ShortTermBorrowings", end), nf.instant("CommercialPaper", end)]
+        parts = [inst("LongTermDebtNoncurrent"), inst("LongTermDebtCurrent")]
+    parts += [inst("ShortTermBorrowings"), inst("CommercialPaper")]
     present = [x for x in parts if x is not None]
     if not present:
         return None, []
@@ -721,9 +749,10 @@ def total_debt(nf: NormalizedFacts, end: date) -> tuple[float | None, list[Metri
 def _invested_capital(ctx: _Ctx, end: date | None, suffix: str) -> tuple[float | None, str | None]:
     if end is None:
         return None, f"prior-year quarter end missing{suffix}"
-    debt, debt_pts = total_debt(ctx.nf, end)
-    eq = ctx.nf.instant("Equity", end)
-    cash = ctx.nf.instant("Cash", end)
+    tol = ti("YOY_MATCH_TOL_DAYS") if suffix else 0  # exact at P, YoY tolerance prior
+    debt, debt_pts = total_debt(ctx.nf, end, tol)
+    eq = ctx.nf.instant("Equity", end, tol_days=tol)
+    cash = ctx.nf.instant("Cash", end, tol_days=tol)
     ctx.use(*debt_pts, eq, cash)
     ctx.inputs[f"TotalDebt_approx{suffix}"] = debt
     ctx.inputs[f"Equity{suffix}"] = eq.value if eq else None

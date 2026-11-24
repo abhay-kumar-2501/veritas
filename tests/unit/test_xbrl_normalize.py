@@ -182,9 +182,9 @@ def test_instant_tolerance() -> None:
         extra={"Assets": [fact(None, date(2024, 12, 28), 5.0, "10-K")]},
     )
     nf = normalize(data)
-    assert nf.instant("Assets", date(2024, 12, 31)) is not None
-    assert nf.instant("Assets", date(2024, 12, 31), tol_days=0) is None
-    assert nf.instant("Assets", date(2025, 1, 15)) is None  # 18 days away
+    assert nf.instant("Assets", date(2024, 12, 31)) is None  # exact by default (D-210)
+    assert nf.instant("Assets", date(2024, 12, 31), tol_days=10) is not None
+    assert nf.instant("Assets", date(2025, 1, 15), tol_days=10) is None  # 18 days away
 
 
 # ---------------------------------------------------------------- tag fallback
@@ -228,3 +228,29 @@ def test_empty_payload() -> None:
     assert nf.quarter_ends() == []
     assert nf.metrics() == {}
     assert nf.fiscal_years() == []
+
+
+def test_fiscal_years_ignore_ltm_columns_in_10q() -> None:
+    """Trailing-12-month (FY-class) facts in 10-Qs are not fiscal years (D-214)."""
+    qs = calendar(2022, 3)
+    ltm = [
+        fact(date(2023, 10, 1), date(2024, 9, 30), 4000.0, "10-Q"),
+        fact(date(2023, 7, 1), date(2024, 6, 30), 4000.0, "10-Q"),
+    ]
+    nf = normalize(build(qs, flows={REV: const(1000.0, 12)}, extra={REV: ltm}))
+    assert nf.fiscal_years() == [
+        (date(2024, 1, 1), date(2024, 12, 31)),
+        (date(2023, 1, 1), date(2023, 12, 31)),
+        (date(2022, 1, 1), date(2022, 12, 31)),
+    ]
+    assert nf.fy("Revenue", date(2024, 9, 30)) is None
+
+
+def test_fiscal_years_chain_stops_at_gap() -> None:
+    """FY2023 missing: the chain from FY2024 stops, so FY2022 is not 'consecutive'."""
+    rows = [
+        fact(date(2024, 1, 1), date(2024, 12, 31), 10.0, "10-K"),
+        fact(date(2022, 1, 1), date(2022, 12, 31), 10.0, "10-K"),
+    ]
+    nf = normalize(build(calendar(2024, 1), extra={REV: rows}))
+    assert nf.fiscal_years() == [(date(2024, 1, 1), date(2024, 12, 31))]

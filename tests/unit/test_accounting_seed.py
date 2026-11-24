@@ -50,20 +50,22 @@ def test_nvda_a1_not_critical() -> None:
         assert r.severity != "CRITICAL", h
 
 
-@pytest.mark.parametrize("ticker", ["NVDA", "WMT", "TSLA", "BA"])
-def test_q4_derivation_reconciles_to_fy(ticker: str) -> None:
+@pytest.mark.parametrize("ticker", ["NVDA", "WMT"])
+@pytest.mark.parametrize("metric", ["Revenue", "NetIncome"])
+def test_four_discrete_quarters_sum_to_fy(ticker: str, metric: str) -> None:
+    """Σ(Q1..Q4) ≈ reported FY (0.01% or $1M). Q1–Q3 must be reported 3M facts, so the
+    check is independent of the FY − 9M derivation (Q1+Q2+Q3 vs the 9M fact)."""
     nf, _g, _e = _load(ticker)
     fys = nf.fiscal_years()[:3]
-    assert fys
-    for _start, end in fys:
-        fy = nf.fy("Revenue", end)
-        q4 = nf.quarter("Revenue", end)
-        assert fy is not None and q4 is not None
-        if q4.derived:
-            nine, big = nf.components(q4)
-            assert q4.value + nine.value == fy.value == big.value
-        ttm = nf.ttm("Revenue", end)
-        assert ttm is not None and ttm.value == pytest.approx(fy.value)
+    assert len(fys) == 3
+    for start, end in fys:
+        fy = nf.fy(metric, end)
+        assert fy is not None
+        quarters = [p for p in nf.series(metric, "quarter").points if start <= p.end <= end]
+        assert len(quarters) == 4, (metric, end)
+        assert all(not q.derived for q in quarters[:3]), (metric, end)
+        total = sum(q.value for q in quarters)
+        assert abs(total - fy.value) <= max(1e-4 * abs(fy.value), 1e6), (metric, end)
 
 
 def test_wmt_receivables_immaterial() -> None:

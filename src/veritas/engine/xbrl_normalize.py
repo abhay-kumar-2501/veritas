@@ -34,6 +34,9 @@ from veritas.models import Frequency, MetricPoint, MetricSeries
 log = logging.getLogger(__name__)
 
 ACCEPTED_FORMS: frozenset[str] = frozenset({"10-K", "10-K/A", "10-Q", "10-Q/A", "10-KT", "10-QT"})
+# A fiscal-year fact must come from an annual report. FY-class durations that appear
+# only in 10-Qs are trailing-twelve-month columns, not fiscal years (D-214).
+ANNUAL_FORMS: frozenset[str] = frozenset({"10-K", "10-K/A", "10-KT"})
 
 # Every Appendix A metric is a money amount. Never mix units (§7.0.3).
 DEFAULT_UNIT = "USD"
@@ -146,12 +149,14 @@ class NormalizedFacts:
                 return max(hits, key=lambda p: (p.filed, p.start or date.min))
         return None
 
-    def instant(self, metric: str, end: date, tol_days: int | None = None) -> MetricPoint | None:
-        """Instant closest to ``end`` within ± tolerance (default ``YOY_MATCH_TOL_DAYS``).
+    def instant(self, metric: str, end: date, tol_days: int = 0) -> MetricPoint | None:
+        """Instant at ``end``; exact by default (current-period lookups, D-210).
 
-        Fallback is per period: the first tag with any instant inside the window wins.
+        With ``tol_days`` > 0 (prior-year / prior-quarter matches, §7.0.8) the closest
+        instant within ± tolerance is returned. Fallback is per period: the first tag
+        with an instant inside the window wins.
         """
-        tol = ti("YOY_MATCH_TOL_DAYS") if tol_days is None else tol_days
+        tol = tol_days
         for td in self._tag_data(metric):
             best: MetricPoint | None = None
             best_key: tuple[int, int] | None = None
@@ -173,7 +178,8 @@ class NormalizedFacts:
             self._ttm_cache[key] = self._compute_ttm(metric, end)
         return self._ttm_cache[key]
 
-    def _previous_quarter(self, metric: str, point: MetricPoint) -> MetricPoint | None:
+    def previous_quarter(self, metric: str, point: MetricPoint) -> MetricPoint | None:
+        """The discrete quarter ending at ``point.start − 1 day`` (± tolerance)."""
         assert point.start is not None
         target = point.start - timedelta(days=1)
         exact = self.quarter(metric, target)
@@ -192,7 +198,7 @@ class NormalizedFacts:
             return None
         chain = [q0]
         while len(chain) < 4:
-            prev = self._previous_quarter(metric, chain[-1])
+            prev = self.previous_quarter(metric, chain[-1])
             if prev is None:
                 return None
             chain.append(prev)
@@ -233,10 +239,12 @@ class NormalizedFacts:
         return sorted(ends, reverse=True)
 
     def fiscal_years(self, metric: str | None = "Revenue") -> list[tuple[date, date]]:
-        """FY ``(start, end)`` periods, newest first.
+        """Consecutive fiscal years ``(start, end)``, newest first (§7.0.7, D-214).
 
-        Uses ``metric``'s FY facts (Revenue by default); if it has none, the union over
-        every duration metric.
+        Built from annual-report FY facts of ``metric`` (Revenue by default; if it has
+        none, every duration metric). Starting from the newest, each earlier year must end
+        within ± ``YOY_MATCH_TOL_DAYS`` of the later year's ``start − 1 day``; the chain
+        stops at the first gap, so periods never overlap.
         """
         periods: set[tuple[date, date]] = set()
         if metric is not None:
@@ -246,7 +254,17 @@ class NormalizedFacts:
             for m in self._duration_metrics():
                 for td in self._tag_data(m):
                     periods.update(td.durations["FY"])
-        return sorted(periods, key=lambda p: (p[1], p[0]), reverse=True)
+        if not periods:
+            return []
+        ordered = sorted(periods, key=lambda p: (p[1], p[0]), reverse=True)
+        tol = ti("YOY_MATCH_TOL_DAYS")
+        chain = [ordered[0]]
+        while True:
+            target = chain[-1][0] - timedelta(days=1)
+            cands = [p for p in ordered if abs((p[1] - target).days) <= tol and p[1] < chain[-1][1]]
+            if not cands:
+                return chain
+            chain.append(min(cands, key=lambda p: (abs((p[1] - target).days), -p[0].toordinal())))
 
     def prior_year_end(self, end: date, candidates: Iterable[date]) -> date | None:
         """The candidate end 365 ± tolerance days before ``end`` (closest to 365)."""
@@ -279,7 +297,20 @@ class NormalizedFacts:
         """
         prior = self.prior_year_quarter_end(end)
         target = prior if prior is not None else end - timedelta(days=365)
-        return self.instant(metric, target)
+        return self.instant(metric, target, tol_days=ti("YOY_MATCH_TOL_DAYS"))
+
+    def quarter_covered(self, metric: str, start: date, end: date) -> bool:
+        """True if some reported duration fact of ``metric`` spans ``[start, end]``.
+
+        Used to tell "not reported" (no fact at all) from "reported in a YTD/FY total but
+        the discrete quarter is not derivable" (D-209).
+        """
+        for td in self._tag_data(metric):
+            for periods in td.durations.values():
+                for s, e in periods:
+                    if s <= start and e >= end:
+                        return True
+        return False
 
     def yoy_ttm(self, metric: str, end: date) -> MetricPoint | None:
         prior = self.prior_year_quarter_end(end, metric)
@@ -403,6 +434,8 @@ def _dedup(
         cls = duration_class(start, end)
         if cls is None:
             continue
+        if cls == "FY" and not any(r[2] in ANNUAL_FORMS for r in rows):
+            continue  # trailing-twelve-month column in a 10-Q, not a fiscal year
         td.durations[cls][(start, end)] = point
     return td
 

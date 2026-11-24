@@ -523,3 +523,70 @@ def test_run_accounting_no_data() -> None:
 def test_unknown_check() -> None:
     with pytest.raises(KeyError):
         ev("A9_NOPE", company())
+
+
+# ====================================================================== audit fixes
+def test_a5_ltm_columns_do_not_create_fiscal_years() -> None:
+    """One 30 charge in 2024-Q4 plus two 10-Q LTM columns must not satisfy the
+    'material charge in each of the last 3 fiscal years' leg (MAJOR-1, D-214)."""
+    ltm = {
+        REV: [
+            fact(date(2023, 10, 1), date(2024, 9, 30), 4000.0, "10-Q"),
+            fact(date(2023, 7, 1), date(2024, 6, 30), 4000.0, "10-Q"),
+        ],
+        RESTR: [
+            fact(date(2023, 10, 1), date(2024, 9, 30), 30.0, "10-Q"),
+            fact(date(2023, 7, 1), date(2024, 6, 30), 30.0, "10-Q"),
+        ],
+    }
+    nf = company(flows={RESTR: [0.0] * 11 + [30.0]}, extra=ltm)
+    r = ev("A5_RESTRUCT", nf)
+    assert r.severity == "NO_FLAG"
+    assert r.outputs["material_fiscal_years_last3"] == 1.0
+
+
+def test_a1_persistence_only_at_previous_quarter() -> None:
+    """AR missing at 2024-09-30: WARNING held at 2024-06-30 does not count (MAJOR-2)."""
+    nf = company(instants={AR: series(500.0, i9=600.0, i10=None, i11=700.0)})
+    r = ev("A1_DSO", nf)
+    assert r.severity == "WARNING"
+    assert r.reason is not None and "persistence not established" in r.reason
+    assert "2024-09-30" in r.reason
+
+
+def test_a1_current_balance_exact_match_only() -> None:
+    """AR tagged only 9 days before P → 'AR not tagged' (MINOR-3)."""
+    nf = company(
+        instants={AR: series(500.0, i11=None)},
+        extra={AR: [fact(None, date(2024, 12, 22), 500.0, "10-K")]},
+    )
+    r = ev("A1_DSO", nf)
+    assert r.state == "NOT_COMPUTABLE" and r.reason is not None and "AR not tagged" in r.reason
+
+
+def test_a1_tag_changed_when_ttm_mixes_tags() -> None:
+    """Quarter and prior-year quarter both use REV; TTM uses SalesRevenueNet for Q1–Q3."""
+    nf = company(
+        flows={
+            REV: [*const(1000.0, 8), None, None, None, None],
+            "SalesRevenueNet": [*const(None, 8), 1000.0, 1000.0, 1000.0, None],
+        },
+        extra={REV: [fact(date(2024, 10, 1), P, 1000.0, "10-K")]},
+    )
+    r = ev("A1_DSO", nf)
+    assert r.state == "COMPUTED"
+    assert "tag changed" in r.annotations
+
+
+def test_a5_non_derivable_quarters_are_unknown() -> None:
+    """Q3 and Q4 2024 only inside the FY total (no 3M, no 9M): unknown, not 'not material'.
+    Known: Q1, Q2 = 10 (2 of 4) → NO_FLAG, but 2 + 2 unknown ≥ 3 → reason says so."""
+    nf = company(
+        flows={RESTR: [*const(0.0, 8), 10.0, 10.0, None, None]},
+        extra={RESTR: [fact(date(2024, 1, 1), P, 40.0, "10-K")]},
+    )
+    r = ev("A5_RESTRUCT", nf)
+    assert r.severity == "NO_FLAG"
+    assert r.outputs["quarters_unknown_last4"] == 2.0
+    assert "restructuring quarter(s) not derivable: 2024-09-30, 2024-12-31" in r.annotations
+    assert r.reason is not None and "could raise it to WARNING" in r.reason
