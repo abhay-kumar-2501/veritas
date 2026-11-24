@@ -167,6 +167,55 @@ def _rel_band(
     return xs, warn, crit
 
 
+def _add_zones(
+    fig: go.Figure,
+    bx: list[date],
+    warn: list[float],
+    crit: list[float],
+    hi: float,
+    fmt: str,
+    unit: str,
+) -> float:
+    """Shared WARNING / CRITICAL zone traces, so every chart has the same legend."""
+    peak = max(hi, max(crit))
+    top = peak * 1.08 if peak > 0 else max(crit) + abs(max(crit)) * 0.25 + 1e-9
+    fig.add_trace(
+        go.Scatter(
+            x=bx,
+            y=warn,
+            mode="lines",
+            line={"color": WARN_LINE, "width": 1, "dash": "dot"},
+            name="WARNING zone",
+            hovertemplate="warn ≥ %{y:" + fmt + "}" + unit + "<extra></extra>",
+        )
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=bx,
+            y=crit,
+            mode="lines",
+            fill="tonexty",
+            fillcolor=WARN_FILL,
+            line={"color": CRIT_LINE, "width": 1, "dash": "dot"},
+            name="CRITICAL zone",
+            hovertemplate="crit ≥ %{y:" + fmt + "}" + unit + "<extra></extra>",
+        )
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=bx,
+            y=[top] * len(bx),
+            mode="lines",
+            fill="tonexty",
+            fillcolor=CRIT_FILL,
+            line={"width": 0},
+            showlegend=False,
+            hoverinfo="skip",
+        )
+    )
+    return max(hi, top)
+
+
 def check_figure(check_id: str, title: str, history: Sequence[Any]) -> go.Figure | None:
     """Line chart of the last 12 quarters plus the threshold band, or None if
     there are fewer than two numeric points."""
@@ -183,53 +232,17 @@ def check_figure(check_id: str, title: str, history: Sequence[Any]) -> go.Figure
     lo = min(v for _, v in numeric)
 
     band = spec.get("band")
+    bx: list[date] = []
+    warn: list[float] = []
+    crit: list[float] = []
     if band in ("rel_days", "rel_pp"):
         bx, warn, crit = _rel_band(pts, check_id)
-        if bx:
-            top = max(hi, max(crit)) * 1.08 if max(hi, max(crit)) > 0 else max(crit) + 1
-            fig.add_trace(
-                go.Scatter(
-                    x=bx,
-                    y=warn,
-                    mode="lines",
-                    line={"color": WARN_LINE, "width": 1, "dash": "dot"},
-                    name="WARNING zone",
-                    hovertemplate="warn ≥ %{y:" + fmt + "}" + unit + "<extra></extra>",
-                )
-            )
-            fig.add_trace(
-                go.Scatter(
-                    x=bx,
-                    y=crit,
-                    mode="lines",
-                    fill="tonexty",
-                    fillcolor=WARN_FILL,
-                    line={"color": CRIT_LINE, "width": 1, "dash": "dot"},
-                    name="CRITICAL zone",
-                    hovertemplate="crit ≥ %{y:" + fmt + "}" + unit + "<extra></extra>",
-                )
-            )
-            fig.add_trace(
-                go.Scatter(
-                    x=bx,
-                    y=[top] * len(bx),
-                    mode="lines",
-                    fill="tonexty",
-                    fillcolor=CRIT_FILL,
-                    line={"width": 0},
-                    showlegend=False,
-                    hoverinfo="skip",
-                )
-            )
-            hi = max(hi, top)
     elif band == "abs_level":
-        w, c = t("ACCRUAL_WARN"), t("ACCRUAL_CRIT")
-        top = max(hi * 1.1, c * 1.25)
-        fig.add_hrect(y0=w, y1=c, fillcolor=WARN_FILL, line_width=0, layer="below")
-        fig.add_hrect(y0=c, y1=top, fillcolor=CRIT_FILL, line_width=0, layer="below")
-        fig.add_hline(y=w, line={"color": WARN_LINE, "width": 1, "dash": "dot"})
-        fig.add_hline(y=c, line={"color": CRIT_LINE, "width": 1, "dash": "dot"})
-        hi = max(hi, top)
+        bx = list(xs)
+        warn = [t("ACCRUAL_WARN")] * len(bx)
+        crit = [t("ACCRUAL_CRIT")] * len(bx)
+    if bx:
+        hi = _add_zones(fig, bx, warn, crit, hi, fmt, unit)
 
     fig.add_trace(
         go.Scatter(

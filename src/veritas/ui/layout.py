@@ -7,8 +7,11 @@ raw HTML or filing text (only small dicts/strings).
 
 from __future__ import annotations
 
+import logging
 import os
 import sys
+import threading
+import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -125,22 +128,92 @@ def init_state() -> None:
 # Analysis
 # ---------------------------------------------------------------------------
 
+RESULT_TTL_S = 3600.0
+RESULT_STORE_MAX = 32
+_NETWORK_ERRORS = frozenset(
+    {"SecBlocked", "SecUnavailable", "SecHTTPError", "ConnectionError", "TimeoutError"}
+)
+_log = logging.getLogger(__name__)
 
-@st.cache_data(ttl=3600, show_spinner=False)
-def _cached_analyze(
-    target: str,
-    offline: bool,
-    nonce: int,
-    refresh: bool = False,
-    _progress: Callable[[str], None] | None = None,
+StoreKey = tuple[str, bool, bool]
+
+
+@st.cache_resource(show_spinner=False)
+def _result_store() -> dict[StoreKey, tuple[float, Any]]:
+    """Process-wide result store (docs/decisions/ui.md D-607).
+
+    Deliberately NOT st.cache_data: the pipeline reports progress through a
+    callback that updates Streamlit elements, and st.cache_data replays element
+    calls on a cache hit, which raises CacheReplayClosureError. The store only
+    holds finished AnalysisResult objects; analyze() always runs outside any
+    cached function."""
+    return {}
+
+
+_STORE_LOCK = threading.Lock()
+
+
+def store_get(key: StoreKey) -> Any | None:
+    now = time.monotonic()
+    with _STORE_LOCK:
+        hit = _result_store().get(key)
+        if hit is None:
+            return None
+        stamp, value = hit
+        if now - stamp > RESULT_TTL_S:
+            _result_store().pop(key, None)
+            return None
+        return value
+
+
+def store_put(key: StoreKey, value: Any) -> None:
+    with _STORE_LOCK:
+        store = _result_store()
+        store[key] = (time.monotonic(), value)
+        while len(store) > RESULT_STORE_MAX:
+            oldest = min(store, key=lambda k: store[k][0])
+            store.pop(oldest, None)
+
+
+def clear_store() -> None:
+    with _STORE_LOCK:
+        _result_store().clear()
+
+
+def _call_pipeline(
+    target: str, offline: bool, refresh: bool, progress: Callable[[str], None]
 ) -> Any:
-    """Cached pipeline call, keyed by (target, offline, nonce, refresh). `nonce`
-    busts this cache for "Refresh live"; `_progress` is excluded from the key."""
     from veritas.pipeline import analyze  # lazy: imported only when needed
 
     if refresh:  # ask the pipeline to bypass its own HTTP cache too
-        return analyze(target, offline=offline, refresh=True, progress=_progress)
-    return analyze(target, offline=offline, progress=_progress)
+        return analyze(target, offline=offline, refresh=True, progress=progress)
+    return analyze(target, offline=offline, progress=progress)
+
+
+def analyze_target(
+    target: str,
+    offline: bool,
+    refresh: bool,
+    progress: Callable[[str], None],
+    sample: bool = False,
+) -> tuple[Any, bool]:
+    """Return (result, from_store). Keyed by (target, offline, refresh) with a
+    1-hour TTL; a refresh also replaces the ordinary entry."""
+    key: StoreKey = (target.upper(), offline, refresh)
+    if not refresh:
+        hit = store_get(key)
+        if hit is not None:
+            return hit, True
+    if sample:
+        for stage in STAGES:
+            progress(stage)
+        result = load_sample()
+    else:
+        result = _call_pipeline(target, offline, refresh, progress)
+    store_put(key, result)
+    if refresh:
+        store_put((target.upper(), offline, False), result)
+    return result, False
 
 
 def _stage_index(message: str, current: int) -> int:
@@ -154,6 +227,13 @@ def _stage_index(message: str, current: int) -> int:
     return current
 
 
+def _is_network_error(exc: BaseException) -> bool:
+    for cls in type(exc).__mro__:
+        if cls.__name__ in _NETWORK_ERRORS or cls.__module__.split(".")[0] == "requests":
+            return True
+    return False
+
+
 def classify_error(exc: BaseException, display: str) -> dict[str, Any]:
     """Map pipeline exceptions to the §2.3 messages."""
     name = type(exc).__name__
@@ -162,17 +242,17 @@ def classify_error(exc: BaseException, display: str) -> dict[str, Any]:
         return {
             "title": "Ticker not found (delisted/renamed tickers unsupported)",
             "message": f"“{display}” is not in the SEC ticker file."
-            + (f" ({str(exc).split(': ', 1)[1]})" if ": " in str(exc) else "")
             + (" Did you mean one of these?" if sugg else ""),
             "suggestions": sugg,
             "retry": False,
             "glyph": "?",
         }
     if name == "UnsupportedFiler":
-        reason = getattr(exc, "reason", None) or str(exc)
+        reason = str(getattr(exc, "reason", None) or "This filer type is not covered.")
         return {
             "title": "Unsupported filer type in v1",
-            "message": f"{reason} VERITAS v1 covers US domestic filers with 10-K/10-Q XBRL.",
+            "message": f"{reason.rstrip('.')}. VERITAS v1 covers US domestic filers with "
+            "10-K/10-Q XBRL.",
             "suggestions": [],
             "retry": False,
             "glyph": "⊘",
@@ -195,11 +275,19 @@ def classify_error(exc: BaseException, display: str) -> dict[str, Any]:
             "retry": False,
             "glyph": "⚙",
         }
-    detail = str(exc).strip()[:300] or name
+    if _is_network_error(exc):
+        return {
+            "title": "SEC EDGAR could not be reached",
+            "message": "SEC may be rate-limiting or temporarily unavailable, and no cached copy "
+            "of this filer exists yet. Try again in a few minutes.",
+            "suggestions": [],
+            "retry": True,
+            "glyph": "↻",
+        }
     return {
         "title": "The analysis could not be completed",
-        "message": f"{detail}. SEC may be rate-limiting or temporarily unavailable; cached "
-        "data is served automatically when it exists.",
+        "message": f"Something went wrong while analyzing “{display}”. The details were "
+        "written to the log. Try again, or start with a seed ticker.",
         "suggestions": [],
         "retry": True,
         "glyph": "↻",
@@ -220,29 +308,41 @@ def _live_blocked(settings: Settings, target: str, sample: bool) -> bool:
     return (not sample) and settings.user_agent is None and target not in SEED_TICKERS
 
 
+def pending_blocked(settings: Settings, sample: bool) -> bool:
+    """Resolve the live-mode gate before anything renders, so a blocked request
+    never hides the current page."""
+    pending = st.session_state.get("_pending")
+    if not pending:
+        return False
+    target = str(pending.get("target", ""))
+    display = str(pending.get("display", target))
+    if not _live_blocked(settings, target, sample):
+        return False
+    st.session_state.pop("_pending", None)
+    st.session_state["_run_error"] = {
+        "title": "Live mode is off: seed tickers only",
+        "message": "Without a valid VERITAS_SEC_USER_AGENT only the bundled seed tickers "
+        f"({', '.join(SEED_TICKERS)}) can be analyzed. Add a User-Agent with a contact "
+        "e-mail to .env to look up “" + display + "” live.",
+        "suggestions": list(SEED_TICKERS),
+        "retry": False,
+        "glyph": "⏻",
+    }
+    return True
+
+
 def run_pending(settings: Settings, sample: bool) -> None:
     pending = st.session_state.pop("_pending", None)
     if not pending:
         return
     target = str(pending.get("target", ""))
     display = str(pending.get("display", target))
-    if _live_blocked(settings, target, sample):
-        st.session_state["_run_error"] = {
-            "title": "Live mode is off: seed tickers only",
-            "message": "Without a valid VERITAS_SEC_USER_AGENT only the bundled seed tickers "
-            f"({', '.join(SEED_TICKERS)}) can be analyzed. Add a User-Agent with a contact "
-            "e-mail to .env to look up “" + display + "” live.",
-            "suggestions": list(SEED_TICKERS),
-            "retry": False,
-            "glyph": "⏻",
-        }
-        return
-    offline = settings.offline or not settings.live_enabled
-    if pending.get("refresh"):
-        st.session_state["_nonce"] = int(st.session_state.get("_nonce", 0)) + 1
-        offline = False
-    nonce = int(st.session_state.get("_nonce", 0))
+    refresh = bool(pending.get("refresh"))
+    offline = False if refresh else (settings.offline or not settings.live_enabled)
 
+    # Hide the previous page while the pipeline runs: Streamlit keeps stale
+    # elements on screen until the run ends (they would show as ghost fragments).
+    st.html("<style>.st-key-body, .st-key-landing { display: none !important; }</style>")
     with st.status(f"Analyzing {display}", expanded=True) as status:
         holder = st.empty()
         holder.markdown(c.progress_panel(STAGES, 0, "Starting"), unsafe_allow_html=True)
@@ -255,21 +355,14 @@ def run_pending(settings: Settings, sample: bool) -> None:
             status.update(label=f"Analyzing {display} · {STAGES[state['idx']]}")
 
         try:
-            if sample:
-                for s in STAGES:
-                    progress(s)
-                result = load_sample()
-            else:
-                result = _cached_analyze(
-                    target, offline, nonce, bool(pending.get("refresh")), _progress=progress
-                )
+            result, _hit = analyze_target(target, offline, refresh, progress, sample)
         except Exception as exc:  # every pipeline failure gets a designed panel
+            _log.exception("analysis of %r failed", target)
             err = classify_error(exc, display)
             err["target"] = target
             err["display"] = display
             st.session_state["_run_error"] = err
-            status.update(label=f"{display}: {err['title']}", state="error", expanded=False)
-            return
+            st.rerun()  # one clean panel under the command bar, no leftover status box
         holder.markdown(c.progress_panel(STAGES, len(STAGES), "Done"), unsafe_allow_html=True)
         status.update(label=f"{display} analyzed", state="complete", expanded=False)
 
@@ -322,6 +415,7 @@ def build_pdf() -> None:
 
 def apply_command(cmd: Command) -> None:
     """Apply a parsed command to session state (PRD §8.3)."""
+    st.session_state["_run_error"] = None  # every submission clears the last run error
     if cmd.kind == "empty":
         st.session_state["cmd_error"] = None
         return
@@ -593,29 +687,32 @@ def run() -> None:
     render_topbar(settings, sample, result)
     if result is None:
         st.markdown(c.hero(), unsafe_allow_html=True)
-    render_command_bar()
-    result = st.session_state.get("result")  # a command may not change it, but be exact
+    render_command_bar()  # may queue an analysis or set cmd_error
+    pending_blocked(settings, sample)
+    render_run_error()  # the single error panel, directly under the command bar
+    run_pending(settings, sample)  # staged progress right here; reruns when done
+    result = st.session_state.get("result")
     if result is None:
         render_seed_cards()
     else:
         render_actions(settings, sample)
-    run_pending(settings, sample)
-    render_run_error()
     render_export_strip()
 
     if result is None:
-        render_banners(settings, sample, None)
-        views.render_landing()
+        with st.container(key="landing"):
+            render_banners(settings, sample, None)
+            views.render_landing()
     else:
-        st.markdown(c.identity(result, sample), unsafe_allow_html=True)
-        render_banners(settings, sample, result)
-        with st.container(key="viewbar"):
-            st.radio(
-                "View",
-                VIEW_LABELS,
-                key="view",
-                horizontal=True,
-                label_visibility="collapsed",
-            )
-        views.render_view(str(st.session_state.get("view")), result)
+        with st.container(key="body"):
+            st.markdown(c.identity(result, sample), unsafe_allow_html=True)
+            render_banners(settings, sample, result)
+            with st.container(key="viewbar"):
+                st.radio(
+                    "View",
+                    VIEW_LABELS,
+                    key="view",
+                    horizontal=True,
+                    label_visibility="collapsed",
+                )
+            views.render_view(str(st.session_state.get("view")), result)
     render_footer()

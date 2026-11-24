@@ -43,8 +43,7 @@ Entries follow PRD Appendix C. They will be merged into `DECISIONS.md`.
 - **Views:** `st.radio(key="view", horizontal=True)`, styled as a segmented control. Commands set `view`/`severity_filter` before the widgets are created in the same run, which Streamlit allows.
 - **Analysis:**
   - The command bar or a seed button queues `_pending`. The run then shows `st.status` with an 8-stage HTML panel driven by the `progress` callback (stage names from §2.2, with fuzzy matching for unknown messages), stores the result and calls `st.rerun()`.
-  - `analyze` is wrapped in `st.cache_data(ttl=3600)`, keyed by `(target, offline, nonce, refresh)`; the callback is `_progress`, excluded from the key. The key is the typed target, not the CIK, because the CIK is unknown before resolution.
-  - "Refresh live" bumps the nonce and passes `refresh=True`.
+  - Results are cached in a process-wide store, keyed by `(target, offline, refresh)` with a 1-hour TTL (see D-607). "Refresh live" passes `refresh=True` and replaces the ordinary entry too.
   - CIK commands are sent to the pipeline as `"CIK <digits>"`, the form `veritas.pipeline.analyze` documents.
 - **Errors:**
   - `TickerNotFound` (with ≤ 5 suggestion buttons), `UnsupportedFiler`, `NoXBRL` and `ImportError` are matched by class name, so the UI has no import-time dependency on the pipeline.
@@ -72,3 +71,36 @@ Entries follow PRD Appendix C. They will be merged into `DECISIONS.md`.
 ### D-606 UI tests and the network guard  (2026-11-24, M6)
 - **Question:** `AppTest` needs an asyncio loop, which opens a local `socketpair`. The global conftest guard blocks every `socket.socket`.
 - **Choice:** `tests/unit/test_ui_app.py` overrides the autouse `_block_network` fixture for that module only. AF_UNIX sockets are allowed; AF_INET/AF_INET6 and `create_connection` still raise. A test in the same module asserts that Internet sockets remain blocked. `conftest.py` is unchanged.
+
+### D-607 Result store instead of `st.cache_data` (deviation from §8.1 wording)  (2026-11-24, M6)
+- **Question:** PRD §8.1 says to wrap `analyze()` in `st.cache_data(ttl=3600)`. The pipeline reports stages through a `progress` callback, and the UI's callback updates Streamlit elements (the progress panel and the `st.status` label). On a cache hit, `st.cache_data` replays the element calls made inside the cached function, and those elements were created outside it, so it raises `CacheReplayClosureError`. Re-analysing a cached ticker failed every time (NVDA → WMT → NVDA, or a seed card followed by the same typed ticker).
+- **Options considered:**
+  - `st.cache_data` with no progress (loses the staged panel the PRD requires);
+  - `st.cache_data` around a progress-free inner call, with stages faked outside it (dishonest progress);
+  - a manual store.
+- **Choice:** A dict returned by `st.cache_resource` (`layout._result_store`) holds `(timestamp, AnalysisResult)`, keyed by `(TARGET, offline, refresh)`. The TTL is a manual 1 hour (`RESULT_TTL_S`). The store is capped at 32 entries (oldest evicted) and guarded by a lock. `analyze(progress=...)` always runs outside any cached function. A cache hit renders no progress, because no work runs. Sample mode goes through the same store, so the path is exercised in tests.
+- **Tests:** an AppTest analyses NVDA → WMT → NVDA → nvda with a stub pipeline that drives the progress callback, and asserts no exception and exactly two pipeline calls. A second test clicks a seed card, then types the same ticker, then clicks the seed pill. A third checks TTL expiry.
+- **Revisit if:** Streamlit gains a cache decorator that permits external element callbacks.
+
+### D-608 Overview structure, context-only flags, humanised copy  (2026-11-24, M6)
+- **Overview sections:**
+  - Contradictions → Unaddressed divergences → Claims consistent use **Module A findings only**.
+  - Order: latest period first, then severity. `accounting_prior_period` findings sort last within each section and render as context cards: faded spine, dashed outline badge, and the tag "prior period · context · unscored".
+  - Module B gets its own "Footnote edits" list, built from the redline payload's material rows. Each row shows the note title and category, a one-column `<ins>`/`<del>` redline of the edited sentence, and a "10-K · scored" or "10-Q · unscored" tag (10-Q rows use the subdued badge). The list caps at 8 with a pointer to `[2] Redline`; the hedging-drift finding follows as a flag card.
+- **Narrative sources:** `modules["A"].extra["sections"]` (10-K, 10-Q and earnings 8-K) renders as a row of chips: form, period, section label, and word count. When the status is not OK/TRUNCATED, the chip reads "Narrative unavailable for this filing" plus the reason.
+- **Proxy:** `extra["cda_text"]` renders, escaped, in a scrollable block inside an expander. The expander opens by default when the status is LOW_CONFIDENCE (§7.4.3).
+- **Copy:**
+  - `human_key()` maps engine keys to labels (`COGS_q` → "COGS (quarter)"); formula blocks keep the raw symbols and the raw key is the tooltip.
+  - `human_text()` turns `->` into `→` and maps snake-case ids (`related_party`, `NO_DRIFT`).
+  - `human_reason()` maps "no inventory tag reported" to "InventoryNet not tagged (issuer may use another concept)".
+- **Numbers (`fmt_value`):** days to 1 dp with "d"; ratios to 3 dp; counts as integers; money as `$X.XB` / `$X.XM` / `$X.XK`. Missing stays "—".
+- **Errors:**
+  - Every submission clears the previous run error. The single error panel sits directly under the command bar, with suggestion chips.
+  - Network failures (`SecBlocked`, `SecUnavailable`, `SecHTTPError`, `requests.*`, `ConnectionError`/`TimeoutError`) say SEC may be rate-limiting. Any other exception gets a clean generic message (details go to the log, never to the page).
+- **While an analysis runs:** a style rule hides the previous page body (`.st-key-body`, `.st-key-landing`). Streamlit keeps stale elements on screen until the run ends, so they would otherwise appear as ghost fragments. The staged progress panel renders directly under the command bar.
+- **Smaller fixes:**
+  - Zero deductions read "0 / 45" in muted text, and the redundant score "Label" row is gone.
+  - Citation chips truncate with an ellipsis and carry the full text in `title`.
+  - The proxy weight column is fixed-width, showing "not parsed" with a tooltip.
+  - A3 uses the same zone traces and legend as A1/A2.
+  - Markdown inline code uses the accent (theme `codeTextColor` plus CSS), never the NO FLAG green.

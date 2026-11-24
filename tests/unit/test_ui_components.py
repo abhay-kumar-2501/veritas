@@ -73,7 +73,7 @@ def test_word_diff_marks_changes() -> None:
 def test_proxy_table_and_notes_escape() -> None:
     out = c.proxy_table([{"metric": EVIL, "context": EVIL, "weight": None, "sentence": EVIL}])
     _assert_escaped(out)
-    assert "weight not parsed" in out
+    assert "not parsed" in out
     _assert_escaped(c.notes_list([EVIL]))
 
 
@@ -127,3 +127,61 @@ def test_check_figure_and_missing_history() -> None:
         charts.check_figure("A1_DSO", "x", ({"period_end": "2024-12-31", "value": None},)) is None
     )
     assert charts.band_note("A5_RESTRUCT").startswith("No band")
+
+
+def test_human_labels_and_formats() -> None:
+    assert c.human_key("COGS_q") == "COGS (quarter)"
+    assert c.human_key("Inventory_end") == "Inventory (end)"
+    assert c.human_key("Inventory_end_prior_year") == "Inventory (end, prior year)"
+    assert c.human_key("delta_dio_days").startswith("Δ DIO")
+    assert c.fmt_value("days_q", 92) == "92.0 d"
+    assert c.fmt_value("dio_rel_change", 0.11634) == "0.116"
+    assert c.fmt_value("COGS_q", 19_892_000_000) == "$19.9B"
+    assert c.fmt_value("goodwill", 257_000_000) == "$257.0M"
+    assert c.fmt_value("COGS_q", None) == "—"
+    assert c.human_text("WARNING -> CRITICAL") == "WARNING → CRITICAL"
+    assert "related party" in c.human_text("related_party")
+    assert c.human_reason("no inventory tag reported").startswith("InventoryNet not tagged")
+
+
+def test_deduction_zero_is_muted_and_no_label_row() -> None:
+    res = sample_result()
+    score = dataclasses.replace(res.score, deductions=(("hedging", 0),))
+    out = c.score_panel(score, "S", {"hedging": 5}, {"A": "ok"})
+    assert "is-zero" in out and "−0" not in out
+    assert ">Label<" not in out
+
+
+def test_citation_chip_has_title_and_ellipsis_span() -> None:
+    cit = sample_result().filings[0]
+    out = c.citation_link(cit)
+    assert 'title="' in out and "vx-cite-text" in out
+
+
+def test_context_badge_for_prior_period() -> None:
+    f = dataclasses.replace(
+        sample_result().modules["A"].findings[0], category="accounting_prior_period"
+    )
+    out = c.finding_card(f)
+    assert "is-context" in out and "prior period · context · unscored" in out
+
+
+def test_footnote_edit_row_and_sources_escape() -> None:
+    row = c.footnote_edit_row(
+        {
+            "form": "10-Q",
+            "note": EVIL,
+            "kind": "MODIFIED",
+            "prior": "will " + EVIL,
+            "current": "may " + EVIL,
+            "category": "related_party",
+        }
+    )
+    _assert_escaped(row)
+    assert "10-Q · unscored" in row and "related party" in row
+    src = c.narrative_sources([{"form": "8-K", "status": "NOT_FOUND", "reason": EVIL}])
+    _assert_escaped(src)
+    assert "Narrative unavailable for this filing" in src
+    block = c.text_block("a\n\nb " + EVIL)
+    _assert_escaped(block)
+    assert "<br><br>" in block

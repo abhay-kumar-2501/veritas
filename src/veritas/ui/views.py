@@ -33,7 +33,7 @@ def _status(mod: Any) -> str:
 
 
 def _reason(mod: Any, fallback: str) -> str:
-    return str(c.get(mod, "reason") or fallback)
+    return c.human_reason(c.get(mod, "reason") or fallback)
 
 
 def _extra(mod: Any) -> Mapping[str, Any]:
@@ -65,18 +65,64 @@ def _caps() -> dict[str, int]:
     return out
 
 
-def _all_findings(mods: Mapping[str, Any]) -> list[Any]:
-    out: list[Any] = []
-    for key in ("A", "B", "C"):
-        out.extend(c.as_list(c.get(mods.get(key), "findings")))
+def _period_ord(f: Any) -> int:
+    d = c.get(c.get(f, "check"), "period_end")
+    if d is None:
+        claims = c.as_list(c.get(f, "claims"))
+        d = c.get(claims[0], "period_end") if claims else None
+    return d.toordinal() if hasattr(d, "toordinal") else 0
+
+
+def _module_a_findings(mods: Mapping[str, Any]) -> list[Any]:
+    """Module A findings, latest period first, then severity, then id. Prior-period
+    context cards therefore sort below the scored latest-period cards."""
+    out = list(c.as_list(c.get(mods.get("A"), "findings")))
     out.sort(
         key=lambda f: (
+            1 if c.is_context(f) else 0,
+            -_period_ord(f),
             -SEVERITY_RANK.get(str(c.get(f, "severity", "")), -1),
-            str(c.get(f, "module", "")),
             str(c.get(f, "id", "")),
         )
     )
     return out
+
+
+def footnote_edits(mod_b: Any) -> list[dict[str, Any]]:
+    """Material edits from Module B's redline payload, latest period first.
+    10-K pair edits are scored; 10-Q pair edits are shown unscored (§7.5)."""
+    pairs = _extra(mod_b).get("pairs")
+    if not isinstance(pairs, Mapping):
+        return []
+    edits: list[dict[str, Any]] = []
+    for form, pair in pairs.items():
+        if not isinstance(pair, Mapping):
+            continue
+        current = pair.get("current")
+        period = c.get(current, "report_date") or c.get(current, "filing_date")
+        for note in c.as_list(pair.get("notes")):
+            if not isinstance(note, Mapping):
+                continue
+            for row in c.as_list(note.get("rows")):
+                if not isinstance(row, Mapping) or not row.get("material"):
+                    continue
+                edits.append(
+                    {
+                        "form": str(form),
+                        "period": period,
+                        "note": note.get("title") or note.get("key"),
+                        "category": note.get("category"),
+                        "kind": row.get("kind"),
+                        "prior": row.get("prior"),
+                        "current": row.get("current"),
+                        "softened": row.get("softened"),
+                    }
+                )
+    edits.sort(key=lambda e: (str(e.get("period") or ""), e["form"] == "10-K"), reverse=True)
+    return edits
+
+
+EDIT_LIMIT = 8
 
 
 def render_overview(result: Any) -> None:
@@ -85,6 +131,9 @@ def render_overview(result: Any) -> None:
     score = c.get(result, "score")
     _md(c.score_panel(score, SCORE_NAME, _caps(), statuses))
     _md(c.module_chips(statuses, c.get(score, "score") is not None))
+    sections_src = _extra(mods.get("A")).get("sections")
+    if isinstance(sections_src, (list, tuple)) and sections_src:
+        _md(c.narrative_sources(sections_src))
     for key in ("A", "B", "C"):
         if statuses[key] not in c.ASSESSED_STATUSES:
             mod = mods.get(key)
@@ -100,7 +149,7 @@ def render_overview(result: Any) -> None:
             horizontal=True,
         )
     flt = str(st.session_state.get("severity_filter") or "ALL")
-    findings = _all_findings(mods)
+    findings = _module_a_findings(mods)
     if flt in _FILTER_TO_SEV:
         findings = [f for f in findings if str(c.get(f, "severity")) == _FILTER_TO_SEV[flt]]
 
@@ -119,13 +168,13 @@ def render_overview(result: Any) -> None:
             "Contradictions",
             contra,
             "Management's statement and the numbers for the same period point in different "
-            "directions." + scope,
+            "directions. Latest period first." + scope,
             ("No contradictions", "No paired statement diverges from the numbers at this filter."),
         ),
         (
             "Unaddressed divergences",
             unaddressed,
-            "Flags in the numbers or disclosures with no matching management statement." + scope,
+            "Accounting flags with no matching management statement." + scope,
             ("No unaddressed divergences", "Every flag at this filter has a paired statement."),
         ),
         (
@@ -149,6 +198,56 @@ def render_overview(result: Any) -> None:
             _md(c.finding_card(f, idx))
             idx += 1
 
+    _render_footnote_summary(mods.get("B"), statuses["B"], flt)
+
+
+def _render_footnote_summary(mod_b: Any, status: str, flt: str) -> None:
+    edits = footnote_edits(mod_b) if status not in _HARD_OFF else []
+    hedge = [
+        f for f in c.as_list(c.get(mod_b, "findings")) if str(c.get(f, "category")) == "hedging"
+    ]
+    if flt not in ("ALL", "WARNING"):
+        edits, hedge = [], []
+    _md(
+        c.section_header(
+            "Footnote edits",
+            len(edits),
+            "Material sentence changes in the financial-statement notes (Module B). "
+            "10-K pair edits are scored; 10-Q pair edits are context only.",
+        )
+    )
+    if status in _HARD_OFF:
+        _md(
+            c.empty_state(
+                "Footnote Redline not assessed",
+                "Module B did not run for this filer; see the panel above.",
+                glyph="B",
+                kind="is-na",
+            )
+        )
+        return
+    if not edits and not hedge:
+        _md(
+            c.empty_state(
+                "No material footnote edits",
+                "No changed note sentence met the material-edit test at this filter.",
+                glyph="¶",
+            )
+        )
+        return
+    for i, e in enumerate(edits[:EDIT_LIMIT]):
+        _md(c.footnote_edit_row(e, i))
+    if len(edits) > EDIT_LIMIT:
+        _md(
+            c.banner(
+                f"+{len(edits) - EDIT_LIMIT} more material edits in [2] Redline (type DIFF).",
+                kind="info",
+                title="More",
+            )
+        )
+    for i, f in enumerate(hedge):
+        _md(c.flag_card(f, i))
+
 
 # ---------------------------------------------------------------------------
 # Redline
@@ -171,12 +270,12 @@ def _note_label(note: Mapping[str, Any]) -> str:
     mat = counts.get("material") if isinstance(counts, Mapping) else None
     bits = [title]
     if cat:
-        bits.append(str(cat))
+        bits.append(c.human_text(cat))
     if mat:
         bits.append(f"{mat} material")
     status = str(note.get("status") or "")
     if status and status != "MATCHED":
-        bits.append(status)
+        bits.append(status.lower())
     return " · ".join(bits)
 
 
@@ -391,7 +490,7 @@ def render_ratios(result: Any) -> None:
                 st.caption(charts.band_note(cid))
             else:
                 state = str(c.get(check, "state", ""))
-                reason = c.get(check, "reason")
+                reason = c.human_reason(c.get(check, "reason")) or None
                 if state == "NOT_APPLICABLE":
                     title = f"Not applicable: {reason or 'gate not met'}"
                     body = "Gated out for this issuer, so it is excluded from coverage."
@@ -506,10 +605,21 @@ def render_proxy(result: Any) -> None:
                 glyph="∅",
             )
         )
-    excerpt = extra.get("text") or extra.get("excerpt")
+    excerpt = extra.get("cda_text") or extra.get("text") or extra.get("excerpt")
     if isinstance(excerpt, str) and excerpt.strip():
-        with st.expander("Extracted CD&A text"):
-            _md(f'<div class="vx" style="font-size:14px;line-height:1.7">{c.esc(excerpt)}</div>')
+        words = len(excerpt.split())
+        with st.expander(
+            f"Extracted CD&A text · {words:,} words", expanded=status == "low_confidence"
+        ):
+            _md(c.text_block(excerpt))
+    elif status == "low_confidence":
+        _md(
+            c.empty_state(
+                "No CD&A text was extracted",
+                "The compensation discussion could not be located as text in this filing.",
+                glyph="¶",
+            )
+        )
 
     findings = c.as_list(c.get(mod, "findings"))
     _md(c.section_header("Flags", len(findings), "C1 SBC vs non-GAAP pay · C2 goodwill."))
