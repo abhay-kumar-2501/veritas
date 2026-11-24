@@ -27,7 +27,7 @@ from veritas.config import (
     get_settings,
 )
 from veritas.ui import components as c
-from veritas.ui import views
+from veritas.ui import story, views
 from veritas.ui.commands import (
     VALID_COMMANDS,
     VIEW_LABELS,
@@ -491,7 +491,7 @@ def render_command_bar() -> None:
         raw = col_in.text_input(
             "Command",
             key="_cmd",
-            placeholder='Ticker or command · try "NVDA", "CIK 320193", "DIFF", "CONTRA", "EXPORT"',
+            placeholder="Type any U.S. company's stock ticker, like NVDA, WMT or AAPL",
             label_visibility="collapsed",
         )
         submitted = col_btn.form_submit_button(
@@ -508,8 +508,8 @@ def render_command_bar() -> None:
 
 def render_seed_cards() -> None:
     st.markdown(
-        '<div class="vx vx-section-kicker"><span class="vx-label">Start with a seed company · '
-        "bundled filings, works offline</span></div>",
+        '<div class="vx vx-section-kicker"><span class="vx-label">Or tap a company to see it '
+        "in action · works offline</span></div>",
         unsafe_allow_html=True,
     )
     cols = st.columns(len(SEED_TICKERS), gap="medium")
@@ -522,7 +522,10 @@ def render_seed_cards() -> None:
                 args=(ticker,),
                 width="stretch",
             )
-            st.markdown(c.seed_meta(ticker), unsafe_allow_html=True)
+            st.markdown(
+                story.seed_meta(ticker, c.SEED_META.get(ticker, (ticker, ""))[0]),
+                unsafe_allow_html=True,
+            )
 
 
 def render_actions(settings: Settings, sample: bool) -> None:
@@ -665,6 +668,10 @@ def _dismiss_error() -> None:
 
 def render_footer() -> None:
     st.markdown(c.footer(DISCLAIMER, APP_VERSION), unsafe_allow_html=True)
+    with st.expander(
+        "Jargon buster: the terms on this page, in plain English", icon=":material/translate:"
+    ):
+        st.markdown(story.glossary_html(), unsafe_allow_html=True)
     with st.expander("Methodology", icon=":material/menu_book:"):
         try:
             text = METHODOLOGY_PATH.read_text(encoding="utf-8")
@@ -714,8 +721,9 @@ def run() -> None:
     result = st.session_state.get("result")
     topbar_slot.markdown(topbar_markup(settings, sample, result), unsafe_allow_html=True)
     if result is None:
-        hero_slot.markdown(c.hero(), unsafe_allow_html=True)
+        hero_slot.markdown(story.hero(), unsafe_allow_html=True)
         render_seed_cards()
+        st.markdown(story.story_steps(), unsafe_allow_html=True)
     else:
         render_actions(settings, sample)
     render_export_strip()

@@ -10,7 +10,7 @@ import streamlit as st
 
 from veritas.config import SCORE_NAME, ti
 from veritas.models import SEVERITY_RANK
-from veritas.ui import charts
+from veritas.ui import charts, plain, story
 from veritas.ui import components as c
 from veritas.ui.commands import VIEW_OVERVIEW, VIEW_PROXY, VIEW_RATIOS, VIEW_REDLINE
 
@@ -47,7 +47,8 @@ def _extra(mod: Any) -> Mapping[str, Any]:
 
 
 def render_landing() -> None:
-    _md(c.how_it_works())
+    _md(story.how_it_works())
+    _md(story.pro_hints())
 
 
 # ---------------------------------------------------------------------------
@@ -140,7 +141,14 @@ def render_overview(result: Any) -> None:
     mods = _modules(result)
     statuses = {k: _status(mods.get(k)) for k in ("A", "B", "C")}
     score = c.get(result, "score")
-    _md(c.score_panel(score, SCORE_NAME, _caps(), statuses))
+    company = plain.short_name(result)
+    all_edits = footnote_edits(mods.get("B")) if statuses["B"] not in _HARD_OFF else []
+    _md(
+        story.verdict_panel(
+            plain.verdict(result, all_edits), company, c.score_band(c.get(score, "score"))
+        )
+    )
+    _md(c.score_panel(score, SCORE_NAME, _caps(), statuses, plain.DEDUCTION_PLAIN))
     _md(c.module_chips(statuses, c.get(score, "score") is not None))
     sections_src = _extra(mods.get("A")).get("sections")
     if isinstance(sections_src, (list, tuple)) and sections_src:
@@ -152,6 +160,7 @@ def render_overview(result: Any) -> None:
             _md(c.not_assessed(key, _reason(mod, fallback), statuses[key]))
 
     st.markdown("")
+    _md(story.view_intro(*story.VIEW_INTROS["overview"]))
     with st.container(key="sevbar"):
         st.radio(
             "Severity filter",
@@ -209,7 +218,7 @@ def render_overview(result: Any) -> None:
             _md(c.empty_state(etitle, ebody, glyph="○"))
             continue
         for f in items:
-            _md(c.finding_card(f, idx))
+            _md(c.finding_card(f, idx, plain.finding_plain(f, company)))
             idx += 1
 
     _render_footnote_summary(mods.get("B"), statuses["B"], flt)
@@ -250,7 +259,7 @@ def _render_footnote_summary(mod_b: Any, status: str, flt: str) -> None:
         )
         return
     for i, e in enumerate(edits[:EDIT_LIMIT]):
-        _md(c.footnote_edit_row(e, i))
+        _md(c.footnote_edit_row(e, i, plain.edit_plain(e)))
     if len(edits) > EDIT_LIMIT:
         _md(
             c.banner(
@@ -319,6 +328,7 @@ def render_redline(result: Any) -> None:
             "comparison is heuristic.",
         )
     )
+    _md(story.view_intro(*story.VIEW_INTROS["redline"]))
     if mod is None or status in _HARD_OFF:
         _md(c.not_assessed("B", _reason(mod, "no comparable filing pair"), status))
         return
@@ -489,6 +499,7 @@ def render_ratios(result: Any) -> None:
             "values; raw XBRL values below each chart.",
         )
     )
+    _md(story.view_intro(*story.VIEW_INTROS["ratios"]))
     if mod is None or status in _HARD_OFF:
         _md(c.not_assessed("A", _reason(mod, "module result missing"), status))
         return
@@ -502,6 +513,7 @@ def render_ratios(result: Any) -> None:
         cid = str(c.get(check, "check_id", "check"))
         with st.container(key=f"ratio_{cid}"):
             _md(c.check_header(check))
+            _md(story.check_explainer(cid))
             fig = charts.check_figure(cid, str(c.get(check, "title", cid)), c.get(check, "history"))
             if fig is not None:
                 st.plotly_chart(
@@ -606,6 +618,7 @@ def render_proxy(result: Any) -> None:
             + ". Detection is heuristic; weights are parsed only from weight tables.",
         )
     )
+    _md(story.view_intro(*story.VIEW_INTROS["proxy"]))
     if mod is None or status in _HARD_OFF:
         _md(c.not_assessed("C", _reason(mod, "Proxy not available"), status))
         return
@@ -653,7 +666,7 @@ def render_proxy(result: Any) -> None:
         _md(c.empty_state("No flags at low confidence", "Flags are suppressed.", glyph="○"))
     elif findings:
         for i, f in enumerate(findings):
-            _md(c.flag_card(f, i))
+            _md(c.flag_card(f, i, plain.incentive_plain(f)))
     else:
         _md(c.empty_state("No incentive flags raised", "Neither C1 nor C2 fired.", glyph="○"))
     notes = c.as_list(extra.get("notes"))

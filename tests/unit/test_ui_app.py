@@ -80,8 +80,8 @@ def test_landing_state(sample_env: None) -> None:
     at = _app().run()
     assert not at.exception
     text = _text(at)
-    assert "What management said." in text
-    assert "How it works" in text
+    assert "What companies say." in text
+    assert "Four questions we ask every company" in text
     assert "Synthetic sample data" in text  # clearly labelled
     keys = {b.key for b in at.button}
     assert {"seedcard_NVDA", "seedcard_WMT", "seedcard_TSLA", "seedcard_BA"} <= keys

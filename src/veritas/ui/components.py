@@ -606,10 +606,18 @@ def identity(result: Any, synthetic: bool) -> str:
         ("FY end", get(result, "fiscal_year_end", "—")),
         ("Parser", get(result, "parser_version", "—")),
     ]
-    fact_html = "".join(
-        f'<div class="vx-fact"><span class="vx-label">{esc(k)}</span><b>{esc(v)}</b></div>'
-        for k, v in facts
-    )
+    from veritas.ui.plain import GLOSSARY  # lazy: plain imports this module
+
+    def _lab(k: str) -> str:
+        tip = GLOSSARY.get(k)
+        if not tip:
+            return f'<span class="vx-label">{esc(k)}</span>'
+        return (
+            f'<span class="vx-label vx-term" tabindex="0" title="{esc(tip)}" '
+            f'data-tip="{esc(tip)}">{esc(k)}</span>'
+        )
+
+    fact_html = "".join(f'<div class="vx-fact">{_lab(k)}<b>{esc(v)}</b></div>' for k, v in facts)
     filings = []
     for cit in as_list(get(result, "filings"))[:6]:
         form = get(cit, "form", "")
@@ -734,6 +742,7 @@ def score_panel(
     score_name: str,
     caps: Mapping[str, int],
     module_statuses: Mapping[str, Any],
+    plain_names: Mapping[str, str] | None = None,
 ) -> str:
     score = get(score_obj, "score")
     num = get(score_obj, "coverage_num")
@@ -779,14 +788,17 @@ def score_panel(
         w = 0.0 if not cap else min(100.0, float(pts) / cap * 100)
         zero = not pts
         amount = "0" if zero else f"−{esc(pts)}"
+        name = (plain_names or {}).get(str(cat)) or human_text(cat)
         rows.append(
-            f'<div class="vx-ded-row {"is-zero" if zero else ""}"><span>{esc(human_text(cat))}'
-            f'</span><div class="vx-ded-bar"><i style="--w:{w:.0f}%"></i></div><span>{amount}'
+            f'<div class="vx-ded-row {"is-zero" if zero else ""}" title="{esc(human_text(cat))}">'
+            f'<span>{esc(name)}</span><div class="vx-ded-bar"><i style="--w:{w:.0f}%"></i></div>'
+            f"<span>{amount}"
             f'<span class="vx-ded-cap"> / {esc(cap or "?")}</span></span></div>'
         )
     if rows:
         ded = (
-            '<div class="vx-label" style="margin-bottom:10px">Deductions · points / cap</div>'
+            '<div class="vx-label" style="margin-bottom:10px">Points taken off · '
+            "points / maximum</div>"
             f'<div class="vx-deductions">{"".join(rows)}</div>'
         )
     else:
@@ -795,7 +807,9 @@ def score_panel(
             '<div class="vx-score-note">No deductions recorded.</div>'
         )
     return one_line(
-        f'<div class="vx vx-panel vx-score">{score_ring(score)}'
+        f'<div class="vx vx-panel vx-score"><div class="vx-ring-wrap">{score_ring(score)}'
+        '<div class="vx-ring-caption">Starts at 100. Points come off for each gap found '
+        "between the story and the numbers.</div></div>"
         f'<div><div class="vx-label">Module D</div><div class="vx-score-title">'
         f"{esc(score_name)}</div>"
         f'<div class="vx-score-meta">{meta}</div>{note_html}</div><div>{ded}</div></div>'
@@ -878,7 +892,7 @@ def is_context(finding: Any) -> bool:
     return str(get(finding, "category", "")) == PRIOR_CATEGORY
 
 
-def finding_card(finding: Any, index: int = 0) -> str:
+def finding_card(finding: Any, index: int = 0, plain: str | None = None) -> str:
     sev = get(finding, "severity")
     context = is_context(finding)
     cls = sev_class(sev) + (" is-context" if context else "")
@@ -925,7 +939,12 @@ def finding_card(finding: Any, index: int = 0) -> str:
         period = fmt_date(get(check, "period_end"))
         cits = current_citations_first(as_list(get(check, "citations")), get(check, "period_end"))
         shows_body = (
-            (f'<div class="vx-formula">{esc(formula)}</div>' if formula else "")
+            (
+                '<details class="vx-math"><summary>Show the formula</summary>'
+                f'<div class="vx-formula">{esc(formula)}</div></details>'
+                if formula
+                else ""
+            )
             + _kv(
                 inputs if isinstance(inputs, Mapping) else {},
                 outputs if isinstance(outputs, Mapping) else {},
@@ -971,9 +990,15 @@ def finding_card(finding: Any, index: int = 0) -> str:
         + annot_html
         + "</div>"
     )
+    plain_html = (
+        f'<div class="vx-plain"><span class="vx-plain-tag">In plain English</span>'
+        f"<span>{esc(plain)}</span></div>"
+        if plain
+        else ""
+    )
     return one_line(
         f'<div class="vx vx-card {cls}" style="--i:{min(index, 12)}">'
-        f"{said}{connector}{shows}{verdict}</div>"
+        f"{plain_html}{said}{connector}{shows}{verdict}</div>"
     )
 
 
@@ -1239,17 +1264,24 @@ def footer(disclaimer: str, version: str) -> str:
     )
 
 
-def flag_card(finding: Any, index: int = 0) -> str:
+def flag_card(finding: Any, index: int = 0, plain: str | None = None) -> str:
     """Compact flag panel (Proxy view): badge, title, explanation, citations."""
     sev = get(finding, "severity")
     cits = "".join(citation_link(c) for c in as_list(get(finding, "citations"))[:3])
+    plain_html = (
+        f'<div class="vx-plain is-inline"><span class="vx-plain-tag">In plain English</span>'
+        f"<span>{esc(plain)}</span></div>"
+        if plain
+        else ""
+    )
     return one_line(
         f'<div class="vx vx-card {sev_class(sev)}" style="--i:{min(index, 12)};'
         'grid-template-columns:1fr"><div class="vx-col vx-col-said">'
         f'<div class="vx-col-head"><span class="vx-label">{esc(get(finding, "id", ""))} · '
         f"{esc(get(finding, 'category', ''))}</span>{badge(sev)}</div>"
         f'<div class="vx-verdict-title" style="margin-top:0">{esc(get(finding, "title", ""))}'
-        f'</div><div class="vx-verdict-expl">{esc(get(finding, "explanation", ""))}</div>'
+        f"</div>{plain_html}"
+        f'<div class="vx-verdict-expl">{esc(get(finding, "explanation", ""))}</div>'
         f'<div class="vx-cites">{cits}</div></div></div>'
     )
 
@@ -1280,7 +1312,7 @@ def inline_diff(prior: Any, current: Any, kind: str) -> str:
     return f"<ins>{esc(current)}</ins>"
 
 
-def footnote_edit_row(edit: Mapping[str, Any], index: int = 0) -> str:
+def footnote_edit_row(edit: Mapping[str, Any], index: int = 0, plain: str | None = None) -> str:
     """A compact material footnote edit: note title, form/scoring tag, redline."""
     form = str(edit.get("form") or "")
     scored = form == "10-K"
@@ -1292,6 +1324,11 @@ def footnote_edit_row(edit: Mapping[str, Any], index: int = 0) -> str:
     sev_html = badge("WARNING") if scored else context_badge("WARNING", "unscored")
     expl = edit.get("explanation")
     expl_html = f'<div class="vx-edit-expl">{esc(expl)}</div>' if expl else ""
+    if plain:
+        expl_html = (
+            f'<div class="vx-plain is-inline"><span class="vx-plain-tag">In plain English</span>'
+            f"<span>{esc(plain)}</span></div>" + expl_html
+        )
     period = fmt_date(edit.get("period"))
     return one_line(
         f'<div class="vx vx-edit {"is-context" if not scored else ""}" '

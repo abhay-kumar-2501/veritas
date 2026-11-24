@@ -124,3 +124,13 @@ Entries follow PRD Appendix C. They will be merged into `DECISIONS.md`.
   - The progress panel and the hide-previous-page style live in an `st.empty()` slot that is emptied when the run finishes.
   - A store hit renders nothing transient and paints the full result in that run.
   - Errors render as the single panel under the command bar in the same run.
+
+### D-610 Plain-English layer for non-specialists  (2026-11-24, M7)
+Goal: a reader with no finance background understands what VERITAS does and what it found, while analysts keep every number, formula and citation one click away.
+- **Two voices, layered.** The plain voice comes first (accent-tinted "In plain English" strips, the "short version" panel, view intros). The evidence voice is unchanged underneath. Formulas fold into a "Show the formula" disclosure; nothing technical was removed.
+- **Generated, not written per company.** `ui/plain.py` builds every sentence from the same check/finding objects the evidence cards show. No new metric is computed and no severity is changed. If an input is missing, the sentence is dropped (or falls back to the generic check description) rather than guessed.
+- **Short version = scored flags only.** One point per scored Module A flag (CRITICAL/WARNING, latest period), per Module C incentive flag, one summary point for 10-K footnote edits, and one for fired hedging drift. Context-only items (prior periods, 10-Q edits) stay in the evidence sections. `tests/unit/test_plain.py` asserts this one-to-one mapping and that every number restates the engine's value.
+- **Wording rules.** "Big gap" (CRITICAL), "Worth a closer look" (WARNING), "In line" (NO_FLAG). The headline bands are the score-ring bands (85 / 60). Every summary ends with "A flag is a reason to read further, not proof that anything is wrong." The banned-word test covers all plain copy.
+- **Analogies** ("a payslip that says $100 while only $70 lands in your bank") explain each check's idea. They are fixed per check and never carry company numbers.
+- **Jargon tips.** Dotted-underline terms show a definition on hover or keyboard focus (CSS only). A "Jargon buster" glossary sits in the footer.
+- **Landing.** The tagline is now "What companies say. What their numbers show." It is followed by a three-step explainer whose demo values are labelled as an illustration. The four modules are phrased as questions, and analyst commands are moved to a "For analysts" row.
