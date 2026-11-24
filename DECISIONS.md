@@ -30,4 +30,13 @@ Entries follow PRD Appendix C. Per-area drafts live in `docs/decisions/` during 
 
 ### D-006 UI theming beyond the PRD palette  (2026-11-24, M0)
 - **Question:** The owner asked for a highly interactive, cohesive, "Apple-like" UI within Streamlit (the owner chose to keep Streamlit).
-- **Choice:** Keep the §8.1 palette tokens exactly. Add derived neutrals and accents only (documented in `src/veritas/ui/styles.css`). JetBrains Mono is bundled locally under `assets/fonts` (OFL licence) and served through Streamlit static serving, so there is no external font fetch. CSS and SVG animation only; no JavaScript keyboard capture (§0.1.7).
+- **Choice:** Keep the §8.1 palette tokens exactly. Add derived neutrals and accents only (documented in `src/veritas/ui/styles.css`). No font files are bundled or fetched: headings use the system sans (SF Pro on macOS) and data uses the PRD mono stack, which resolves to SF Mono or Menlo on macOS. Details are in docs/decisions/ui.md. CSS and SVG animation only; no JavaScript keyboard capture (§0.1.7).
+
+## Area decision logs
+Detailed entries from the parallel build are kept per area and are part of this log:
+- docs/decisions/data.md (D-1xx): EDGAR, seed cache, Appendix D evidence
+- docs/decisions/accounting.md (D-2xx): XBRL normalization, checks, scorer
+- docs/decisions/narrative.md (D-3xx): text extraction, sections, claims
+- docs/decisions/footnotes_proxy.md (D-4xx): Modules B and C
+- docs/decisions/pdf.md (D-5xx): tear-sheet
+- docs/decisions/ui.md (D-6xx): Streamlit UI and design system

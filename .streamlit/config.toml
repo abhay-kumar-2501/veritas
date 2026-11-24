@@ -1,0 +1,34 @@
+# VERITAS theme (PRD §8.1 palette; rationale in docs/decisions/ui.md).
+# Fonts are system stacks only: no external font fetch.
+[theme]
+base = "dark"
+primaryColor = "#5AC8FA"
+backgroundColor = "#0B0E14"
+secondaryBackgroundColor = "#131822"
+textColor = "#E6EAF2"
+linkColor = "#5AC8FA"
+borderColor = "rgba(255,255,255,0.10)"
+dataframeBorderColor = "rgba(255,255,255,0.06)"
+dataframeHeaderBackgroundColor = "#181E2A"
+codeBackgroundColor = "#0E121A"
+redColor = "#FF3B30"
+orangeColor = "#FFB300"
+yellowColor = "#FFB300"
+greenColor = "#00E676"
+grayColor = "#6B7280"
+blueColor = "#5AC8FA"
+font = "-apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', Inter, 'Segoe UI', system-ui, sans-serif"
+codeFont = "'JetBrains Mono', 'SF Mono', Menlo, Consolas, monospace"
+headingFont = "-apple-system, BlinkMacSystemFont, 'SF Pro Display', Inter, system-ui, sans-serif"
+baseRadius = "10px"
+showWidgetBorder = true
+
+[client]
+toolbarMode = "minimal"
+showErrorDetails = "stacktrace"
+
+[server]
+headless = true
+
+[browser]
+gatherUsageStats = false

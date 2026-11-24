@@ -11,7 +11,6 @@ It has four modules:
 
 The full method, thresholds, and limitations are in [docs/METHODOLOGY.md](docs/METHODOLOGY.md).
 
-> **Status:** this checkout is at milestone M0 (scaffold and contracts). The commands below describe the intended interface. `app.py`, the `analyze` CLI, `scripts/build_seed_cache.py`, and the seed cache are not implemented or populated yet.
 
 ## Requirements
 
