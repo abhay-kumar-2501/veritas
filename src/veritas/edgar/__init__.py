@@ -1,0 +1,1 @@
+"""VERITAS edgar package."""
