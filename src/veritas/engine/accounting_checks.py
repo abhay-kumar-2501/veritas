@@ -342,7 +342,7 @@ def _previous_warn(nf: NormalizedFacts, cfg: _DaysCfg, q: MetricPoint) -> tuple[
     prev = nf.previous_quarter(cfg.flow, q)
     if prev is None:
         return None, False
-    r = _days_ratio(nf, cfg, prev.end, bal_tol=ti("YOY_MATCH_TOL_DAYS"))
+    r = _days_ratio(nf, cfg, prev.end, bal_tol=0)
     if r is None:
         return prev.end, False
     return prev.end, _warn(r[2], r[3])

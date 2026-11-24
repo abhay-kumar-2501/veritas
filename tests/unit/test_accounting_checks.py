@@ -564,6 +564,18 @@ def test_a1_current_balance_exact_match_only() -> None:
     assert r.state == "NOT_COMPUTABLE" and r.reason is not None and "AR not tagged" in r.reason
 
 
+def test_a1_persistence_balance_exact_match_only() -> None:
+    """AR at the previous quarter end tagged only 9 days early: persistence is not
+    established, so the result is WARNING, not CRITICAL (re-audit P7)."""
+    nf = company(
+        instants={AR: series(500.0, i9=600.0, i10=None, i11=700.0)},
+        extra={AR: [fact(None, date(2024, 9, 21), 650.0, "10-Q")]},
+    )
+    r = ev("A1_DSO", nf)
+    assert r.severity == "WARNING"
+    assert r.reason is not None and "persistence not established" in r.reason
+
+
 def test_a1_tag_changed_when_ttm_mixes_tags() -> None:
     """Quarter and prior-year quarter both use REV; TTM uses SalesRevenueNet for Q1–Q3."""
     nf = company(

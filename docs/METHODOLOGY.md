@@ -24,7 +24,7 @@ Company facts are XBRL data that companies file with their reports. The app work
 
 - **Keys.** A fact is identified by its tag, unit, start date, and end date. The `fy`, `fp`, and `frame` fields describe the filing that reported the fact, not the period, and are never used as keys.
 - **Accepted forms.** `10-K`, `10-K/A`, `10-Q`, `10-Q/A`, `10-KT`, and `10-QT`.
-- **Units.** `USD` for money, `shares`, and `USD/shares`. Units are never mixed.
+- **Units.** `USD` for money, `shares`, and `USD/shares`. Units are never mixed. Implementation note: the current checks read only `USD` facts.
 - **Dedup and restatements.** For an identical tag, unit, start, and end, the row with the latest `filed` date is kept, so the most recent restated value is used. A point is flagged `restated` when the earliest-filed value differs from the latest by more than 1%. Original values are flagged, not used.
 - **Implementation note:** rows from forms outside the accepted list (for example `DEF 14A` pay-versus-performance rows) are dropped before dedup. "Differs by more than 1%" is measured against the earliest value; if that value is 0, any non-zero latest value counts as restated. Ties on `filed` are broken by accession, then by value (D-202).
 
@@ -60,7 +60,7 @@ Implementation note: fiscal years are taken from 10-K-family facts only (`10-K`,
 
 The prior-year comparison is the same duration class with an end date 365 ± 10 days earlier. For instants (balance-sheet values), it is the instant at that prior end date, within ± 10 days.
 
-Implementation note: the ± 10-day tolerance applies only to prior-year matches. Instants at the evaluation period `P` itself (receivables, inventory, assets, payables, goodwill, equity, cash, debt) are matched exactly on the end date, and then fall through the tag order. The previous-quarter balance in the persistence test also uses the ± 10-day window (D-210).
+Implementation note: the ± 10-day tolerance applies only to prior-year matches. Instants at the evaluation period `P` itself (receivables, inventory, assets, payables, goodwill, equity, cash, debt) are matched exactly on the end date, and then fall through the tag order. The previous-quarter balance in the persistence test is also matched exactly (D-204, D-210).
 
 ### Trailing twelve months (TTM)
 
@@ -165,6 +165,8 @@ If either condition holds, the guard applies:
 - `Goodwill` rose ≥ 10% year over year.
 
 When the guard applies, the severity is capped at WARNING and the annotation `acquisition-distorted` is added.
+
+Implementation note: a leg whose inputs are missing never triggers the guard. The acquisitions leg needs four tagged discrete quarters for its TTM. Many issuers tag acquisition payments only in quarters with a deal, so in practice the guard usually trips on the goodwill leg (in the bundled seed data the acquisitions TTM is computable only for NVIDIA).
 
 ### A3: Accruals and cash conversion, scored
 
@@ -587,6 +589,9 @@ Foreign private issuers (20-F, 40-F, 6-K), funds and ETFs, and legacy `.txt`-onl
 - **Image-only proxy metrics** are not detected, which produces `LOW_CONFIDENCE`.
 - **Financial issuers, foreign private issuers, funds, and shells** are out of scope or limited.
 - **The score is uncalibrated** and not comparable across sectors.
+- **Acquisition guard** depends mostly on the goodwill leg, because acquisition payments are often untagged in quarters with no deal.
+- **Proxy flag C1** compares the incentive design described in the latest proxy (which usually covers the prior fiscal year) with trailing-twelve-month financials at the latest quarter. Its FCF legs apply only when TTM free cash flow is positive, so a small positive FCF can decide whether C1 fires.
+- **Monetary facts** are read in USD only; share-based units are not used by the checks.
 
 ## Disclaimer
 

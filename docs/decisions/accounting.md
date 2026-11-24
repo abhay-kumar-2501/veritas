@@ -76,3 +76,8 @@ Draft entries to merge into `DECISIONS.md` (Appendix C template).
 - **Question:** Some filers put trailing-twelve-month columns (350–380 days) in 10-Qs. Counting them as fiscal years let one restructuring charge plus two LTM facts satisfy A5's "each of the last 3 fiscal years" leg.
 - **Choice:** An FY-class `(tag, start, end)` key is kept only if at least one of its rows comes from `10-K`, `10-K/A` or `10-KT`. FY-class facts seen only in 10-Qs are dropped everywhere: `fy()`, Q4 derivation and `fiscal_years()`. `fiscal_years()` starts at the newest FY and chains backwards; each earlier year must end within ± `YOY_MATCH_TOL_DAYS` of the later year's `start − 1 day`. The chain stops at the first gap, so periods never overlap and "the last 3 fiscal years" are consecutive.
 - **Revisit if:** a filer reports FY totals only in a 10-KT/10-K/A pattern not covered here.
+
+### D-215 Persistence balance matched exactly  (2026-11-24, re-audit)
+- **Question:** The A1/A2 persistence test matched the previous quarter's balance with ±10 days, inconsistent with exact matching at P (D-210); re-audit probe P7.
+- **Choice:** The balance at the previous quarter end is matched exactly (`bal_tol=0`). Prior-year matches keep the ±10-day tolerance (§7.0.8).
+- **Evidence:** regression test `test_a1_persistence_balance_exact_match_only`; seed results unchanged (golden test).
