@@ -348,3 +348,16 @@ def test_non_note_textblocks_excluded() -> None:
         "IncomeTaxDisclosureTextBlock",
         "SegmentDisclosureTextBlock",
     ]
+
+
+def test_explanation_uses_full_matched_word() -> None:
+    from veritas.engine.footnote_diff import _explain, _term
+
+    sentence = "Management revised its estimate of the allocation of shared costs for the period."
+    assert _term(None, sentence) == "estimate"
+    assert _term(None, "Revenue is recognized when control transfers.") == "recognized"
+    text = _explain({"kind": "INSERTED", "softened": False, "term": "estimate"}, "Debt", "debt")
+    assert "cites 'estimate'" in text
+    assert "cites" in _explain(
+        {"kind": "DELETED", "softened": False, "term": "waiver"}, "D", "debt"
+    )

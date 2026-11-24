@@ -94,6 +94,13 @@ def footnote_edits(mod_b: Any) -> list[dict[str, Any]]:
     pairs = _extra(mod_b).get("pairs")
     if not isinstance(pairs, Mapping):
         return []
+    # The engine's explanation for each material edit, keyed by the cited sentence.
+    explain: dict[str, str] = {}
+    for f in c.as_list(c.get(mod_b, "findings")):
+        for cit in c.as_list(c.get(f, "citations")):
+            q = c.get(cit, "quote_raw")
+            if q and c.get(f, "explanation"):
+                explain.setdefault(str(q), str(c.get(f, "explanation")))
     edits: list[dict[str, Any]] = []
     for form, pair in pairs.items():
         if not isinstance(pair, Mapping):
@@ -116,9 +123,13 @@ def footnote_edits(mod_b: Any) -> list[dict[str, Any]]:
                         "prior": row.get("prior"),
                         "current": row.get("current"),
                         "softened": row.get("softened"),
+                        "explanation": explain.get(str(row.get("current") or ""))
+                        or explain.get(str(row.get("prior") or "")),
                     }
                 )
-    edits.sort(key=lambda e: (str(e.get("period") or ""), e["form"] == "10-K"), reverse=True)
+    # Scored 10-K edits first, then 10-Q context; latest period first within each.
+    edits.sort(key=lambda e: str(e.get("period") or ""), reverse=True)
+    edits.sort(key=lambda e: 0 if e["form"] == "10-K" else 1)
     return edits
 
 
@@ -190,7 +201,10 @@ def render_overview(result: Any) -> None:
     )
     idx = 0
     for title, items, desc, (etitle, ebody) in sections:
-        _md(c.section_header(title, len(items), desc))
+        n_ctx = sum(1 for f in items if c.is_context(f))
+        n_scored = len(items) - n_ctx
+        count: int | str = n_scored if not n_ctx else f"{n_scored} · +{n_ctx} prior-period context"
+        _md(c.section_header(title, count, desc))
         if not items:
             _md(c.empty_state(etitle, ebody, glyph="○"))
             continue
@@ -269,7 +283,9 @@ def _note_label(note: Mapping[str, Any]) -> str:
     counts = note.get("counts") if isinstance(note.get("counts"), Mapping) else {}
     mat = counts.get("material") if isinstance(counts, Mapping) else None
     bits = [title]
-    if cat:
+    # Skip the category when the title already says it ("Contingencies", or
+    # "Commitments and Contingencies" for category "contingencies").
+    if cat and c.human_text(cat).strip().lower() not in title.lower():
         bits.append(c.human_text(cat))
     if mat:
         bits.append(f"{mat} material")
@@ -430,16 +446,20 @@ def render_redline(result: Any) -> None:
 
 def _history_rows(check: Any) -> list[dict[str, Any]]:
     cits = c.as_list(c.get(check, "citations"))
-    cit = cits[0] if cits else None
+    key = c.PRIMARY_KEY.get(str(c.get(check, "check_id", "")), "")
     rows: list[dict[str, Any]] = []
     for h in c.as_list(c.get(check, "history")):
         if not isinstance(h, Mapping):
             continue
+        period = str(h.get("period_end") or "")
+        # Only a citation filed for this very period may stand next to its value.
+        cit = next((x for x in cits if c.fmt_date(c.get(x, "report_date")) == period), None)
         url = h.get("url") or c.get(cit, "url")
         rows.append(
             {
-                "Period end": str(h.get("period_end") or ""),
-                "Value": h.get("value"),
+                "Period end": period,
+                "Value": c.fmt_value(key, h.get("value")),
+                "Raw": h.get("value"),
                 "XBRL tag": h.get("xbrl_tag") or h.get("tag") or c.get(cit, "xbrl_tag"),
                 "Accession": h.get("accession") or c.get(cit, "accession"),
                 "Filing": url if c.safe_url(url) else None,
@@ -452,7 +472,7 @@ def _history_rows(check: Any) -> list[dict[str, Any]]:
 
 _COLS = {
     "Filing": st.column_config.LinkColumn("Filing", display_text="open ↗"),
-    "Value": st.column_config.NumberColumn("Value", format="%.4g"),
+    "Raw": st.column_config.NumberColumn("Raw", format="%.6g"),
     "Derived": st.column_config.CheckboxColumn("Derived"),
     "Restated": st.column_config.CheckboxColumn("Restated"),
 }
@@ -544,7 +564,13 @@ def render_ratios(result: Any) -> None:
                     {
                         "Series": str(key),
                         "Period end": c.fmt_date(c.get(p, "end")),
-                        "Value": c.get(p, "value"),
+                        "Value": (
+                            c.fmt_money(float(c.get(p, "value")))
+                            if str(c.get(p, "unit", "")) == "USD"
+                            and isinstance(c.get(p, "value"), (int, float))
+                            else c.fmt_num(c.get(p, "value"))
+                        ),
+                        "Raw": c.get(p, "value"),
                         "Unit": c.get(p, "unit"),
                         "XBRL tag": c.get(p, "xbrl_tag"),
                         "Accession": acc or None,
@@ -631,6 +657,15 @@ def render_proxy(result: Any) -> None:
     else:
         _md(c.empty_state("No incentive flags raised", "Neither C1 nor C2 fired.", glyph="○"))
     notes = c.as_list(extra.get("notes"))
+    if status == "low_confidence":
+        # The panel above already states the reason; do not repeat it as a note.
+        shown = _reason(mod, "").strip().lower().rstrip(".")
+        notes = [
+            n
+            for n in notes
+            if not shown
+            or (shown not in str(n).lower() and str(n).lower().rstrip(".") not in shown)
+        ]
     if notes:
         _md(c.notes_list(notes))
 

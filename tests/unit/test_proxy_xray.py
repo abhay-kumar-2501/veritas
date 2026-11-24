@@ -261,3 +261,30 @@ def test_c1_not_applicable_wording() -> None:
         revenue_ttm=100.0,
     )
     assert res.extra["checks"]["C1"]["reason"] == "Adjusted EBITDA / non-GAAP EPS not detected"
+
+
+def test_consultant_analysis_sentence_not_a_metric() -> None:
+    res = _go(
+        _doc(
+            "The consultant ran analyses of the correlation between incentive plan performance "
+            "measures and total shareholder return.",
+            "The annual bonus payout is tied to revenue growth against the target.",
+            "Adjusted EBITDA sets the annual bonus payout against the target.",
+        )
+    )
+    assert "TSR" not in {m["metric"] for m in res.extra["metrics"]}
+
+
+def test_c1_explanation_prints_amounts() -> None:
+    res = _go(
+        _doc(
+            "Adjusted EBITDA sets the annual bonus payout against the target.",
+            "The annual bonus is tied to revenue growth against the target.",
+        ),
+        sbc_ttm=444e6,
+        revenue_ttm=50e9,
+        fcf_ttm=16e6,
+    )
+    text = res.findings[0].explanation
+    assert "SBC $444M vs free cash flow $16M (TTM); FCF − SBC = −$428M" in text
+    assert "2775" not in text

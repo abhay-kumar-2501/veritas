@@ -266,3 +266,35 @@ def test_nvda_accounting_points_sum() -> None:
     r = analyze("NVDA", offline=True)
     total = sum(_points(f, r) for f in r.modules["A"].findings)
     assert total == dict(r.score.deductions)["accounting"]
+
+
+_ID_RE = re.compile(r"\b[A-Za-z0-9]+(?:_[A-Za-z0-9]+)+\b")
+
+
+@_needs_seed
+@pytest.mark.parametrize("ticker", SEEDS)
+def test_no_raw_ids_in_text(ticker: str) -> None:
+    from veritas.pipeline import analyze
+
+    text = " ".join(_pages(build_pdf(analyze(ticker, offline=True))))
+    allowed = re.compile(r"\.htm|\.xml|^\d{10}-\d{2}-\d{6}$")
+    bad = []
+    for tok in _ID_RE.findall(text):
+        pos = text.find(tok)
+        tail = text[pos + len(tok) : pos + len(tok) + 4]
+        if allowed.search(tok) or allowed.search(tail):
+            continue
+        bad.append(tok)
+    assert not bad, bad
+    assert "low_confidence" not in text and "-0 " not in text
+
+
+def test_humanised_names() -> None:
+    from veritas.export.pdf_tearsheet import _h, _metric_name, _status_label
+
+    assert _metric_name("NONGAAP_EPS") == "Non-GAAP EPS"
+    assert _metric_name("ADJ_EBITDA") == "Adjusted EBITDA"
+    assert _metric_name("M_AND_A") == "M&A"
+    assert _metric_name("FCF") == "Free cash flow"
+    assert _status_label("low_confidence") == "low confidence"
+    assert _h("note (related_party) x") == "note (related party) x"

@@ -1125,9 +1125,13 @@ span.vx-cite { color: var(--text-3); background: var(--panel-3); }
 .vx-ded-row.is-zero span:first-child, .vx-ded-row.is-zero span:last-child { color: var(--text-3); }
 
 /* Context-only (prior period, 10-Q) flags: outline badge, faded spine */
-.vx-badge.is-context { background: transparent; border-style: dashed; opacity: 0.72; }
-.vx-badge.is-context.critical { color: rgba(255, 59, 48, 0.85); border-color: rgba(255, 59, 48, 0.35); }
-.vx-badge.is-context.warning { color: rgba(255, 179, 0, 0.85); border-color: rgba(255, 179, 0, 0.32); }
+/* Context badge: neutral grey text on a dashed hairline; severity survives only
+   as the small dot, so it can never be mistaken for a scored flag. */
+.vx-badge.is-context { color: var(--text-3); background: transparent; border: 1px dashed var(--hairline-3); font-weight: 500; }
+.vx-badge.is-context::before { opacity: 0.6; }
+.vx-badge.is-context.critical::before { background: var(--sev-critical); }
+.vx-badge.is-context.warning::before { background: var(--sev-warning); }
+.vx-edit-expl { font-size: 13px; color: var(--text-3); line-height: 1.55; margin: -2px 0 10px; }
 .vx-card.is-context { background: rgba(19, 24, 34, 0.6); box-shadow: none; }
 .vx-card.is-context::before { opacity: 0.35; }
 .vx-card.is-context .vx-connector.is-contra b { box-shadow: none; }

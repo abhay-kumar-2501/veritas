@@ -29,6 +29,7 @@
 - Numbers audit: 1,072 values re-derived from raw companyfacts with no veritas imports, 0 mismatches; scores recomputed by hand. Two latent rule bugs (LTM-as-FY in A5; persistence skipping a quarter) and four minors fixed with regression tests.
 - Text/UI/PDF audit: one UI blocker (cached re-analysis) and accuracy issues (earnings releases never scanned; spurious material terms; miscategorised notes; aspirational sentences escalating; PDF points and glyphs) fixed with regression tests.
 - Golden snapshot of seed results: tests/golden/seed_expected.json.
+- Re-verification (both Fable auditors): numbers PASS (1,278 values, 0 mismatches); text/UI/PDF "ready to show the owner". All remaining loose ends they listed were then fixed (footnote list ordering, citation order, formatting, intent-rule position, proxy analysis sentences, PDF labels).
 
 ### §12 performance (scripts/bench.py, median of 2, Apple Silicon)
 | Scenario | Target | NVDA | WMT | TSLA | BA |
@@ -42,7 +43,7 @@
 | Ticker | Score | Coverage | Notes |
 |---|---|---|---|
 | NVDA | 74 | 4/5 | A3 accruals CRITICAL; A1/A2 WARNING (acquisition-distorted, not escalated) |
-| WMT | 95 | 3/4 | AR immaterial (A1 N/A); 1 material footnote edit |
+| WMT | 95 | 3/4 | AR immaterial (A1 N/A); 1 material footnote edit; proxy LOW_CONFIDENCE (1 metric) |
 | TSLA | 75 | 4/5 | A2 DIO WARNING; proxy LOW_CONFIDENCE (unassessed) |
 | BA | 70 | 3/4 | A3 WARNING (CCR 0.52); C1 (non-GAAP pay metric vs FCF − SBC < 0) |
 

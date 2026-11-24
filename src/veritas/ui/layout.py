@@ -331,7 +331,22 @@ def pending_blocked(settings: Settings, sample: bool) -> bool:
     return True
 
 
+def apply_result(result: Any, display: str) -> None:
+    st.session_state["result"] = result
+    st.session_state["ticker"] = c.get(result, "ticker", display)
+    st.session_state["view"] = VIEW_OVERVIEW
+    st.session_state["severity_filter"] = "ALL"
+    st.session_state["pdf_bytes"] = None
+    st.session_state["_pdf_name"] = None
+    st.session_state["_run_error"] = None
+
+
+_HIDE_BODY = "<style>.st-key-body, .st-key-landing { display: none !important; }</style>"
+
+
 def run_pending(settings: Settings, sample: bool) -> None:
+    """Run a queued analysis in this same script run (no st.rerun), so the page
+    never shows an intermediate frame. A store hit renders nothing transient."""
     pending = st.session_state.pop("_pending", None)
     if not pending:
         return
@@ -340,40 +355,45 @@ def run_pending(settings: Settings, sample: bool) -> None:
     refresh = bool(pending.get("refresh"))
     offline = False if refresh else (settings.offline or not settings.live_enabled)
 
-    # Hide the previous page while the pipeline runs: Streamlit keeps stale
-    # elements on screen until the run ends (they would show as ghost fragments).
-    st.html("<style>.st-key-body, .st-key-landing { display: none !important; }</style>")
-    with st.status(f"Analyzing {display}", expanded=True) as status:
-        holder = st.empty()
-        holder.markdown(c.progress_panel(STAGES, 0, "Starting"), unsafe_allow_html=True)
-        state = {"idx": 0}
+    if not refresh:
+        hit = store_get((target.upper(), offline, False))
+        if hit is not None:
+            apply_result(hit, display)
+            return
 
-        def progress(message: str) -> None:
-            msg = str(message)
-            state["idx"] = _stage_index(msg, state["idx"])
-            holder.markdown(c.progress_panel(STAGES, state["idx"], msg), unsafe_allow_html=True)
-            status.update(label=f"Analyzing {display} · {STAGES[state['idx']]}")
+    result: Any = None
+    error: BaseException | None = None
+    slot = st.empty()
+    with slot.container():
+        # Hide the previous page while the pipeline runs: Streamlit keeps stale
+        # elements on screen until the run ends (they would show as ghost
+        # fragments). Rendered via Markdown so emptying the slot removes it.
+        st.markdown(_HIDE_BODY, unsafe_allow_html=True)
+        with st.status(f"Analyzing {display}", expanded=True) as status:
+            holder = st.empty()
+            holder.markdown(c.progress_panel(STAGES, 0, "Starting"), unsafe_allow_html=True)
+            state = {"idx": 0}
 
-        try:
-            result, _hit = analyze_target(target, offline, refresh, progress, sample)
-        except Exception as exc:  # every pipeline failure gets a designed panel
-            _log.exception("analysis of %r failed", target)
-            err = classify_error(exc, display)
-            err["target"] = target
-            err["display"] = display
-            st.session_state["_run_error"] = err
-            st.rerun()  # one clean panel under the command bar, no leftover status box
-        holder.markdown(c.progress_panel(STAGES, len(STAGES), "Done"), unsafe_allow_html=True)
-        status.update(label=f"{display} analyzed", state="complete", expanded=False)
+            def progress(message: str) -> None:
+                msg = str(message)
+                state["idx"] = _stage_index(msg, state["idx"])
+                holder.markdown(c.progress_panel(STAGES, state["idx"], msg), unsafe_allow_html=True)
+                status.update(label=f"Analyzing {display} · {STAGES[state['idx']]}")
 
-    st.session_state["result"] = result
-    st.session_state["ticker"] = c.get(result, "ticker", display)
-    st.session_state["view"] = VIEW_OVERVIEW
-    st.session_state["severity_filter"] = "ALL"
-    st.session_state["pdf_bytes"] = None
-    st.session_state["_pdf_name"] = None
-    st.session_state["_run_error"] = None
-    st.rerun()
+            try:
+                result, _hit = analyze_target(target, offline, refresh, progress, sample)
+            except Exception as exc:  # every pipeline failure gets a designed panel
+                _log.exception("analysis of %r failed", target)
+                error = exc
+    slot.empty()
+
+    if error is not None:
+        err = classify_error(error, display)
+        err["target"] = target
+        err["display"] = display
+        st.session_state["_run_error"] = err
+        return
+    apply_result(result, display)
 
 
 # ---------------------------------------------------------------------------
@@ -450,7 +470,7 @@ def _on_export_click() -> None:
 # ---------------------------------------------------------------------------
 
 
-def render_topbar(settings: Settings, sample: bool, result: Any) -> None:
+def topbar_markup(settings: Settings, sample: bool, result: Any) -> str:
     chips: list[tuple[str, str]] = []
     if sample:
         chips.append(("SYNTHETIC SAMPLE", "is-synthetic"))
@@ -462,7 +482,7 @@ def render_topbar(settings: Settings, sample: bool, result: Any) -> None:
         chips.append(("OFFLINE MODE", ""))
     else:
         chips.append(("LIVE DISABLED · NO USER-AGENT", ""))
-    st.markdown(c.topbar(chips), unsafe_allow_html=True)
+    return c.topbar(chips)
 
 
 def render_command_bar() -> None:
@@ -683,16 +703,18 @@ def run() -> None:
     settings = get_settings()
     sample = sample_mode()
 
-    result = st.session_state.get("result")
-    render_topbar(settings, sample, result)
-    if result is None:
-        st.markdown(c.hero(), unsafe_allow_html=True)
+    # Top bar and hero are placeholders filled after any queued analysis has run,
+    # so the whole page reflects the new result in this same run.
+    topbar_slot = st.empty()
+    hero_slot = st.empty()
     render_command_bar()  # may queue an analysis or set cmd_error
     pending_blocked(settings, sample)
+    run_pending(settings, sample)  # staged progress under the command bar; no rerun
     render_run_error()  # the single error panel, directly under the command bar
-    run_pending(settings, sample)  # staged progress right here; reruns when done
     result = st.session_state.get("result")
+    topbar_slot.markdown(topbar_markup(settings, sample, result), unsafe_allow_html=True)
     if result is None:
+        hero_slot.markdown(c.hero(), unsafe_allow_html=True)
         render_seed_cards()
     else:
         render_actions(settings, sample)

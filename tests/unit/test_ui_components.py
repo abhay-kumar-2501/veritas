@@ -135,7 +135,7 @@ def test_human_labels_and_formats() -> None:
     assert c.human_key("Inventory_end_prior_year") == "Inventory (end, prior year)"
     assert c.human_key("delta_dio_days").startswith("Δ DIO")
     assert c.fmt_value("days_q", 92) == "92.0 d"
-    assert c.fmt_value("dio_rel_change", 0.11634) == "0.116"
+    assert c.fmt_value("dio_rel_change", 0.11634) == "+11.6%"
     assert c.fmt_value("COGS_q", 19_892_000_000) == "$19.9B"
     assert c.fmt_value("goodwill", 257_000_000) == "$257.0M"
     assert c.fmt_value("COGS_q", None) == "—"
@@ -185,3 +185,54 @@ def test_footnote_edit_row_and_sources_escape() -> None:
     block = c.text_block("a\n\nb " + EVIL)
     _assert_escaped(block)
     assert "<br><br>" in block
+
+
+def test_formatter_percentages_multiples_money() -> None:
+    assert c.fmt_value("goodwill_growth", 3.015) == "+301.5%"
+    assert c.fmt_value("acquisitions_pct_prior_assets", 0.014) == "1.4%"
+    assert c.fmt_value("roic", 0.233) == "23.3%"
+    assert c.fmt_value("accrual_ratio", 0.057) == "5.7%"
+    assert c.fmt_value("cap_rate_change_pp", 0.052) == "+5.2 pp"
+    assert c.fmt_value("capex_da", 2.314) == "2.31×"
+    assert c.fmt_value("fcf", 13_509_000_000) == "$13.5B"
+    assert c.fmt_value("OCF_ttm_growth", -0.12) == "−12.0%"
+    assert c.fmt_value("delta_DSO", 12.1) == "12.1 d"
+
+
+def test_check_labels_and_display_tiles() -> None:
+    checks = {k.check_id: k for k in sample_checks()}
+    head = c.check_header(checks["A4_CAPRATE"])
+    assert "A4 · Capitalization intensity" in head and "A4_CAPRATE" not in head
+    tiles = c.display_metrics([checks["X_FCF"]])
+    assert "Free cash flow" in tiles and "X_FCF" not in tiles
+
+
+def test_reason_mapping_everywhere() -> None:
+    raw = "no inventory tag reported"
+    assert "InventoryNet not tagged" in c.human_text("Not applicable: " + raw)
+    a2 = dataclasses.replace(sample_checks()[1], state="NOT_APPLICABLE", reason=raw)
+    assert raw not in c.display_metrics([a2])
+
+
+def test_current_period_citations_first() -> None:
+    from datetime import date
+
+    res = sample_result()
+    old = dataclasses.replace(
+        res.filings[1], report_date=date(2023, 12, 31), filing_date=date(2024, 2, 21)
+    )
+    cur = dataclasses.replace(
+        res.filings[0], report_date=date(2024, 12, 31), filing_date=date(2025, 2, 20)
+    )
+    ordered = c.current_citations_first([old, old, cur], date(2024, 12, 31))
+    assert ordered[0] is cur
+
+
+def test_unscored_edit_uses_context_badge() -> None:
+    row = c.footnote_edit_row({"form": "10-Q", "kind": "INSERTED", "current": "x"})
+    assert "is-context" in row and "unscored" in row
+    scored = c.footnote_edit_row(
+        {"form": "10-K", "kind": "INSERTED", "current": "x", "explanation": "cites 'estimate'"}
+    )
+    assert "vx-badge warning" in scored and "is-context" not in scored
+    assert "cites &#x27;estimate&#x27;" in scored  # engine wording shown unchanged

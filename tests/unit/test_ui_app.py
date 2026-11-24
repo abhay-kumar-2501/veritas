@@ -395,3 +395,71 @@ def test_low_confidence_proxy_shows_escaped_cda_text(sample_env: None) -> None:
     assert "LOW CONFIDENCE" in text
     assert "Compensation Discussion" in text
     assert "<script>" not in text and "&lt;script&gt;" in text
+
+
+def test_footnote_edits_scored_first_and_counts(sample_env: None) -> None:
+    from veritas.ui import views
+
+    res = _rich()
+    b = res.modules["B"]
+    pairs = dict(b.extra["pairs"])
+    tenq = {
+        "prior": pairs["10-K"]["prior"],
+        "current": {**pairs["10-K"]["current"], "form": "10-Q", "report_date": "2025-09-30"},
+        "notes": [
+            {
+                "title": "Commitments",
+                "category": "commitments",
+                "rows": [{"kind": "INSERTED", "current": "New 10-Q sentence.", "material": True}]
+                * 9,
+            }
+        ],
+    }
+    pairs["10-Q"] = tenq
+    b2 = dataclasses.replace(b, extra={**b.extra, "pairs": pairs})
+    edits = views.footnote_edits(b2)
+    assert edits[0]["form"] == "10-K" and edits[-1]["form"] == "10-Q"
+    res2 = dataclasses.replace(res, modules={**res.modules, "B": b2})
+    at = _app()
+    at.session_state["result"] = res2
+    at.run()
+    assert not at.exception
+    text = _text(at)
+    assert text.index("10-K · scored") < text.index("10-Q · unscored")
+    assert "prior-period context" in text  # context card counted separately
+
+
+def test_note_label_drops_duplicate_category() -> None:
+    from veritas.ui.views import _note_label
+
+    assert _note_label({"title": "Contingencies", "category": "contingencies"}) == "Contingencies"
+    assert "debt" in _note_label({"title": "Borrowings", "category": "debt"})
+    label = _note_label({"title": "Commitments and Contingencies", "category": "contingencies"})
+    assert label == "Commitments and Contingencies"
+
+
+def test_proxy_low_confidence_reason_once(sample_env: None) -> None:
+    res = _rich()
+    reason = "Fewer than 2 incentive metrics could be detected"
+    c_mod = dataclasses.replace(
+        res.modules["C"],
+        reason=reason,
+        extra={**res.modules["C"].extra, "notes": [reason + ". Extracted text is shown."]},
+    )
+    at = _app()
+    at.session_state["result"] = dataclasses.replace(res, modules={**res.modules, "C": c_mod})
+    at.run()
+    at.radio(key="view").set_value(VIEW_LABELS[3]).run()
+    assert not at.exception
+    assert _text(at).count(reason) == 1
+
+
+def test_cache_hit_renders_in_same_run(fake_pipeline: list[str]) -> None:
+    at = _app().run()
+    _submit(at, "NVDA")
+    _submit(at, "WMT")
+    _submit(at, "NVDA")
+    assert not at.exception
+    assert at.session_state["ticker"] == "NVDA"
+    assert "SampleCo" in _text(at)  # identity rendered in the run that served the hit
+    assert not at.status  # no transient progress panel on a store hit

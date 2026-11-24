@@ -52,3 +52,9 @@
 ### D-414 Proxy hit filters  (2026-11-24, M3, audit fix)
 - A hit whose every alias match has a negation (lexicon `NEGATION_TOKEN` in the 6 tokens before, or "does not believe/consider/use/rely") is ignored. Sentences about peer-group selection/appropriateness/adjustment (`PROXY_PEER_SELECTION`) are ignored. The metrics table keeps one row per (metric, context): a weighted row wins, else the earliest. LOW_CONFIDENCE and the ROIC/FCF note use all hits, not the deduplicated table.
 - `NONGAAP_EPS` also matches "core EPS" / "core earnings (loss) per share" (BA). C1 "not applicable" now reads "Adjusted EBITDA / non-GAAP EPS not detected"; other non-GAAP measures (NVDA Non-GAAP Operating Income) are outside the PRD alias list.
+
+### D-415 Exclude consultant-analysis sentences from proxy metrics  (2026-11-24, re-audit)
+- **Question:** WMT's CD&A mentions "analyses of the correlation between incentive plan performance measures and total shareholder return", a compensation-consultant analysis, not an incentive metric. It was counted as a TSR metric.
+- **Choice:** Sentences or rows matching `analys\w+ of the (correlation|relationship|alignment)` or `correlation between` (lexicons `PROXY_ANALYSIS_CONTEXT`) do not count as metric hits.
+- **Consequence:** WMT now has one distinct metric (REVENUE), so Module C is `low_confidence` under §7.4.3 (fewer than 2 metrics) and deducts nothing. WMT's score is unchanged (95). The golden snapshot was regenerated deliberately.
+- **Revisit if:** a CD&A uses "correlation" language to describe an actual payout formula.

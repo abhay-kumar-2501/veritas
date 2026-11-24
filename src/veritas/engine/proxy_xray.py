@@ -27,6 +27,7 @@ from veritas.lexicons import (
     PART_III_ITEM11_END,
     PART_III_ITEM11_START,
     PROXY_ALIASES,
+    PROXY_ANALYSIS_CONTEXT,
     PROXY_EXCLUDE_HEADING,
     PROXY_EXCLUDE_SENTENCE,
     PROXY_NEGATION_PHRASE,
@@ -196,7 +197,7 @@ def detect_metrics(cda_text: str) -> list[dict[str, Any]]:
             unit = cda_text[a:b]
             if PROXY_EXCLUDE_SENTENCE.search(unit):
                 continue
-            if PROXY_PEER_SELECTION.search(unit):
+            if PROXY_PEER_SELECTION.search(unit) or PROXY_ANALYSIS_CONTEXT.search(unit):
                 continue  # peer-group selection criteria are not incentive metrics (D-413)
             for name, rx in PROXY_ALIASES.items():
                 if not any(not _negated(unit, m.start()) for m in rx.finditer(unit)):
@@ -257,6 +258,17 @@ def _pick_source(
                 how = "item11" if span is None else span[2]
                 return item11[0], body, "10-K Item 11", how, item11[1]
     return None
+
+
+def _money(x: float) -> str:
+    """$X.XB / $X.XM / $X,XXX with a leading minus sign for negatives."""
+    a = abs(x)
+    sign = "\u2212" if x < 0 else ""
+    if a >= 1e9:
+        return f"{sign}${a / 1e9:.1f}B"
+    if a >= 1e6:
+        return f"{sign}${a / 1e6:.0f}M"
+    return f"{sign}${a:,.0f}"
 
 
 def _fmt_pct(x: float) -> str:
@@ -336,12 +348,19 @@ def run_proxy(
         if revenue_ttm is not None and revenue_ttm > 0:
             ratio = sbc_ttm / revenue_ttm
             if ratio >= t("C1_SBC_REV"):
-                reasons.append(f"SBC is {_fmt_pct(ratio)} of revenue (TTM)")
-        if fcf_ttm is not None and fcf_ttm > 0:
-            if sbc_ttm >= t("C1_SBC_FCF") * fcf_ttm:
-                reasons.append(f"SBC is {_fmt_pct(sbc_ttm / fcf_ttm)} of free cash flow (TTM)")
-            if fcf_ttm - sbc_ttm < 0:
-                reasons.append("Free cash flow less SBC is negative (TTM)")
+                reasons.append(
+                    f"SBC {_money(sbc_ttm)} is {_fmt_pct(ratio)} of revenue "
+                    f"{_money(revenue_ttm)} (TTM)"
+                )
+        if (
+            fcf_ttm is not None
+            and fcf_ttm > 0
+            and (sbc_ttm >= t("C1_SBC_FCF") * fcf_ttm or fcf_ttm - sbc_ttm < 0)
+        ):
+            reasons.append(
+                f"SBC {_money(sbc_ttm)} vs free cash flow {_money(fcf_ttm)} (TTM); "
+                f"FCF \u2212 SBC = {_money(fcf_ttm - sbc_ttm)}"
+            )
         if reasons:
             c1 = {"state": "FIRED", "reason": None, "reasons": reasons}
             findings.append(

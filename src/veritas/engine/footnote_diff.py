@@ -720,7 +720,12 @@ def _term(prior: str | None, current: str | None) -> str | None:
         if side:
             m = MATERIAL_TERMS.search(side)
             if m:
-                return m.group(0).lower()
+                a, b = m.start(), m.end()
+                while a > 0 and side[a - 1].isalpha():
+                    a -= 1
+                while b < len(side) and side[b].isalpha():
+                    b += 1
+                return side[a:b].lower()
     return None
 
 
@@ -977,7 +982,7 @@ def _explain(row: dict[str, Any], title: str, category: str | None) -> str:
     if kind == "INSERTED":
         base = f"A sentence was added {where} that cites '{term}'."
     elif kind == "DELETED":
-        base = f"A sentence was removed {where} that cited '{term}'."
+        base = f"A sentence was removed {where} that cites '{term}'."
     elif row["softened"]:
         base = f"A sentence {where} was reworded with weaker modal language (e.g. 'will' to 'may')."
     else:

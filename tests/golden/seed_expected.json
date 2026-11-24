@@ -253,8 +253,7 @@
     "deductions": {
       "accounting": 0,
       "footnotes": 5,
-      "hedging": 0,
-      "incentives": 0
+      "hedging": 0
     },
     "findings_scored": [
       [
@@ -266,7 +265,7 @@
     "modules": {
       "A": "ok",
       "B": "ok",
-      "C": "ok"
+      "C": "low_confidence"
     },
     "score": 95
   }

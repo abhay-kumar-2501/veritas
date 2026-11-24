@@ -81,13 +81,15 @@ ABBREVIATION_RE = re.compile(
     + r")"
 )
 # narrative: intent/aspiration markers (D-311, beyond Appendix B per §0.3). A sentence
-# describing goals or strategy is tagged INTENT and never becomes a claim. Only the noun
-# strategy/strategies: the adjective "strategic" also describes achieved results (WMT).
+# describing goals or strategy is tagged INTENT and never becomes a claim. INTENT rejects
+# only a cluster match that it PRECEDES in the sentence; INTENT_STRATEGY (the nouns only;
+# the adjective "strategic" also describes achieved results, WMT) rejects the sentence.
 INTENT = re.compile(
-    r"\b(focus\w*\s+on|aim\w*\s+to|seek\w*\s+to|strateg(y|ies)|in\s+order\s+to|to\s+enable|"
+    r"\b(focus\w*\s+on|aim\w*\s+to|seek\w*\s+to|in\s+order\s+to|to\s+enable|"
     r"priorit\w*|goal\s+(is|of))\b",
     I,
 )
+INTENT_STRATEGY = re.compile(r"\bstrateg(y|ies)\b", I)
 # narrative: earnings-deck summary headings that end the EX-99.1 narrative (D-312). Letters
 # may be spaced out ("F I N A N C I A L S U M M A R Y", as in the TSLA update decks).
 EARNINGS_SUMMARY_HEADING = re.compile(
@@ -275,4 +277,7 @@ PROXY_PEER_SELECTION = re.compile(
     r"(peer[\s-]+group|peer[\s-]+companies).*(selected|selection|comparator|appropriate|removing|adding|criteria)|"
     r"(selected|selection|comparator|appropriate|removing|adding|criteria).*(peer[\s-]+group|peer[\s-]+companies)",
     I,
+)
+PROXY_ANALYSIS_CONTEXT = re.compile(
+    r"analys\w+\s+of\s+the\s+(correlation|relationship|alignment)|correlation\s+between", I
 )

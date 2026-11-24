@@ -104,3 +104,23 @@ Entries follow PRD Appendix C. They will be merged into `DECISIONS.md`.
   - The proxy weight column is fixed-width, showing "not parsed" with a tooltip.
   - A3 uses the same zone traces and legend as A1/A2.
   - Markdown inline code uses the accent (theme `codeTextColor` plus CSS), never the NO FLAG green.
+
+### D-609 Re-audit loose ends  (2026-11-24, M6)
+- **Footnote edits:** sorted with scored 10-K pair edits first, then 10-Q pair edits; latest period first within each group. Unscored rows use the context badge: grey text on a dashed hairline, severity only as a small dot, labelled "WARNING · unscored". Each row shows the engine's explanation for the edit verbatim (escaped only), matched through the finding's cited sentence, so the matched lexicon word appears exactly as the engine emits it.
+- **Citations:** a finding card lists the check's citations for its own period first (`report_date == period_end`), then the rest by filing date, newest first. In the Ratios raw table, a citation's accession and link appear only on the row of the period it was filed for.
+- **One formatter (`fmt_value`) everywhere:** Overview inputs/outputs, Ratios headers ("latest …"), display-only tiles and raw tables. The rules:
+  - percentage-point changes → "+5.2 pp";
+  - growth and relative changes → signed percent, e.g. "+301.5%";
+  - levels (pct, accrual ratio, capitalization rate, ROIC, tax rate) → "23.3%";
+  - CapEx/D&A and CCR → "2.31×";
+  - days → "12.1 d";
+  - money → "$13.5B".
+  Raw tables keep a numeric "Raw" column next to the formatted "Value". Check ids are humanised ("A1 · Receivables (DSO)", "Free cash flow").
+- **Counts:** section counts include only scored cards; prior-period context cards are noted separately ("0 · +1 prior-period context").
+- **Proxy:** at LOW_CONFIDENCE, a note that repeats the panel's reason is not shown again.
+- **Reason mapping:** "no inventory tag reported" is now rewritten as a case-insensitive substring inside `human_text`, so it applies wherever engine prose renders, not only to exact reason strings.
+- **No intermediate frame:** a queued analysis runs in the same script run with no `st.rerun()`.
+  - The top bar and hero are placeholders filled after the analysis.
+  - The progress panel and the hide-previous-page style live in an `st.empty()` slot that is emptied when the run finishes.
+  - A store hit renders nothing transient and paints the full result in that run.
+  - Errors render as the single panel under the command bar in the same run.

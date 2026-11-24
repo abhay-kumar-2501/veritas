@@ -21,6 +21,7 @@ from veritas.lexicons import (
     DECIMAL_POINT,
     FORWARD,
     INTENT,
+    INTENT_STRATEGY,
     NEGATION_SUFFIX,
     NEGATION_TOKEN,
     SENTENCE_SPLIT,
@@ -110,8 +111,17 @@ def _negated(sentence: str, match_start: int) -> bool:
     return any(NEGATION_TOKEN.match(tok) or tok.lower().endswith(NEGATION_SUFFIX) for tok in tokens)
 
 
+def _intent_before(sentence: str, match_start: int) -> bool:
+    """True when an INTENT marker starts before the cluster match (D-311)."""
+    m = INTENT.search(sentence)
+    return m is not None and m.start() < match_start
+
+
 def _cluster_hit(sentence: str, cluster: str) -> bool:
-    return any(not _negated(sentence, m.start()) for m in CLUSTERS[cluster].finditer(sentence))
+    return any(
+        not _negated(sentence, m.start()) and not _intent_before(sentence, m.start())
+        for m in CLUSTERS[cluster].finditer(sentence)
+    )
 
 
 def extract_claims(section: Section, doc: DocRef) -> tuple[Claim, ...]:
@@ -134,8 +144,8 @@ def extract_claims(section: Section, doc: DocRef) -> tuple[Claim, ...]:
             n = len(sentence.split())
             if n < min_words or n > max_words:
                 continue
-            if FORWARD.search(sentence) or INTENT.search(sentence):
-                continue  # tagged FORWARD / INTENT, never a claim (D-311)
+            if FORWARD.search(sentence) or INTENT_STRATEGY.search(sentence):
+                continue  # tagged FORWARD / INTENT (strategy noun), never a claim (D-311)
             for cluster in ("DEMAND", "MARGIN", "ONETIME"):
                 if not _cluster_hit(sentence, cluster):
                     continue

@@ -74,11 +74,15 @@
   - keep Appendix B only (false contradictions);
   - the lead's pattern including `strateg\w*`;
   - the same pattern limited to the nouns *strategy* and *strategies*.
-- **Choice:** `INTENT` in `lexicons.py` (marked `# narrative`): `\b(focus\w*\s+on|aim\w*\s+to|seek\w*\s+to|strateg(y|ies)|in\s+order\s+to|to\s+enable|priorit\w*|goal\s+(is|of))\b`. It is applied like FORWARD: the whole sentence is tagged INTENT and never becomes a claim. This is a deliberate addition beyond Appendix B under §0.3.
-- **Rationale / evidence:** with `strateg\w*`, the adjective also removed WMT's achieved-result sentence "The increase for fiscal 2026 was primarily due to operational efficiencies ... reorganization charges related to strategic supply chain decisions". The noun-only form keeps that sentence and still rejects the strategy sentence. Known false negatives, accepted because false positives escalate scores:
-  - BA "...similar solid demand as governments prioritize security";
-  - WMT "disciplined cost controls ... strategic growth priorities".
-- **Revisit if:** reviewers find achieved-result claims lost to `priorit\w*` or `focus on`.
+- **Choice:** two patterns in `lexicons.py` (marked `# narrative`). This is a deliberate addition beyond Appendix B under §0.3.
+  - `INTENT` = `\b(focus\w*\s+on|aim\w*\s+to|seek\w*\s+to|in\s+order\s+to|to\s+enable|priorit\w*|goal\s+(is|of))\b`. It rejects a cluster match only when an INTENT marker starts **before** that match in the same sentence (re-audit refinement). In effect, only cluster matches that start before the sentence's first intent marker can become claims.
+  - `INTENT_STRATEGY` = `\bstrateg(y|ies)\b`. It rejects the whole sentence, like FORWARD.
+- **Rationale / evidence:**
+  - Rejected as intended: TSLA "...while focusing on further cost reductions and operational efficiencies..." ("focusing on" precedes "operational efficiencies") and WMT "...accelerating eCommerce sales growth ... complement our strategy" (strategy noun).
+  - Kept: BA "we are seeing similar solid demand as governments prioritize security..." ("prioritize" follows the match). This restores that claim in both BA 10-Ks (BA claims 7 -> 9). Module A findings for all four seeds are unchanged, verified by diffing pipeline findings with the old whole-sentence rule.
+  - Kept: WMT "...operational efficiencies ... strategic supply chain decisions". With `strateg\w*` the adjective would have removed it, so the noun-only form is used.
+  - WMT "The decreases were primarily due to disciplined cost controls..." is still rejected, by the PRD negation token "decreases". That is PRD-literal and left as is.
+- **Revisit if:** reviewers find achieved-result claims lost to an intent marker placed before the claim phrase.
 
 ### D-312 Earnings-release cut for slide decks  (2026-11-24, M2, audit fix)
 - **Question:** the TSLA "Update" EX-99.1 is a slide deck with letter-spaced headings and no `|` tables. `locate_earnings_release` ran to about 7,400 words.
@@ -112,10 +116,10 @@
 | TSLA | 10-K 2025 / 2024 | 8,563 / 7,616 | 0 / 0 |
 | TSLA | 10-Q Q3 2026 / Q3 2025 | 6,340 / 6,196 | 0 / 0 |
 | TSLA | 8-K EX-99.1 x2 | 496 / 497 | 0 / 0 |
-| BA | 10-K 2025 / 2024 | 13,589 / 13,657 | 4 / 3 |
+| BA | 10-K 2025 / 2024 | 13,589 / 13,657 | 5 / 4 |
 | BA | 10-Q Q3 2026 / Q3 2025 | 7,745 / 8,841 | 0 / 0 |
 | BA | 8-K EX-99.1 x2 | 98 / 72 | 0 / 0 |
 
-(Updated after D-311 to D-314.)
+(Updated after D-311 to D-314, including the positional INTENT refinement.)
 
 The only NVDA 10-Q match ("We believe these AI cloud partners have strong customer demand ...") is rejected as forward-looking, as the PRD requires.

@@ -166,8 +166,22 @@ _BASE_LABELS: dict[str, str] = {
     "roic": "ROIC",
     "nopat": "NOPAT",
     "ic": "Invested capital",
+    "invested_capital": "Invested capital",
+    "cap_rate": "Capitalization rate",
+    "capex_da": "CapEx / D&A",
+    "operatingincome": "Operating income",
+    "pretaxincome": "Pre-tax income",
+    "rnd": "R&D",
+    "tax": "Tax",
+    "tax_rate": "Tax rate",
+    "restructuring": "Restructuring",
+    "fcf_sbc": "FCF after SBC",
+    "material_quarters_last4": "Material quarters (last 4)",
+    "material_quarters_last8": "Material quarters (last 8)",
+    "restated_metric_count": "Restated metrics",
 }
 _SUFFIX_LABELS: tuple[tuple[str, str], ...] = (
+    ("_change_pp", "change, pp"),
     ("_prior_year", "prior year"),
     ("_pct_prior_assets", "% of prior-year assets"),
     ("_rel_change", "relative change"),
@@ -220,16 +234,66 @@ def human_key(key: Any) -> str:
 
 
 def human_text(text: Any) -> str:
-    """Tidy engine prose for display: arrows, snake-case identifiers."""
+    """Tidy engine prose for display: arrows, snake-case identifiers, known
+    engine reasons. Quoted words (e.g. a matched lexicon term) pass unchanged."""
     out = str(text or "").replace(" -> ", " → ").replace("->", "→")
     for k, v in _TOKEN_TEXT.items():
         out = out.replace(k, v)
+    for k, v in _REASON_TEXT.items():
+        out = re.sub(re.escape(k), v, out, flags=re.IGNORECASE)
     return out
 
 
 def human_reason(reason: Any) -> str:
-    r = str(reason or "").strip()
-    return _REASON_TEXT.get(r.lower(), human_text(r))
+    return human_text(str(reason or "").strip())
+
+
+CHECK_LABELS: dict[str, str] = {
+    "A1_DSO": "A1 · Receivables (DSO)",
+    "A2_DIO": "A2 · Inventory (DIO)",
+    "A3_ACCRUALS": "A3 · Accruals / cash conversion",
+    "A4_CAPRATE": "A4 · Capitalization intensity",
+    "A5_RESTRUCT": "A5 · Recurring restructuring",
+    "X_CAPEX_DA": "CapEx / D&A",
+    "X_DPO": "Payables (DPO)",
+    "X_FCF": "Free cash flow",
+    "X_FCF_SBC": "FCF after SBC",
+    "X_ROIC": "ROIC (approx.)",
+    "X_RESTATED": "Restated values",
+}
+PRIMARY_KEY: dict[str, str] = {
+    "A1_DSO": "dso",
+    "A2_DIO": "dio",
+    "A3_ACCRUALS": "accrual_ratio",
+    "A4_CAPRATE": "cap_rate",
+    "A5_RESTRUCT": "material_quarters_last4",
+    "X_CAPEX_DA": "capex_da",
+    "X_DPO": "dpo",
+    "X_FCF": "fcf",
+    "X_FCF_SBC": "fcf_sbc",
+    "X_ROIC": "roic",
+    "X_RESTATED": "restated_metric_count",
+}
+
+
+def check_label(check_id: Any) -> str:
+    cid = str(check_id or "")
+    return CHECK_LABELS.get(cid, cid.replace("_", " "))
+
+
+def primary_value(check: Any) -> tuple[str, Any]:
+    """(output key, value) of a check's headline metric."""
+    outputs = get(check, "outputs", {}) or {}
+    if not isinstance(outputs, Mapping) or not outputs:
+        return ("", None)
+    key = PRIMARY_KEY.get(str(get(check, "check_id", "")))
+    if key and key in outputs:
+        return (key, outputs[key])
+    for k, v in outputs.items():
+        if v is not None:
+            return (str(k), v)
+    k0 = next(iter(outputs))
+    return (str(k0), outputs[k0])
 
 
 _MONEY_HINTS = (
@@ -258,23 +322,39 @@ _MONEY_HINTS = (
     "debt",
     "equity",
     "cash",
+    "operatingincome",
+    "pretaxincome",
+    "tax_ttm",
+    "tax",
+    "invested_capital",
+    "restructuring",
+    "rnd",
+    "fcf_sbc",
+    "x_fcf",
 )
 
 
 def metric_kind(key: Any) -> str:
-    """Classify an input/output key: days | ratio | count | money | plain."""
+    """Classify an input/output key.
+
+    pp: percentage-point change | spct: signed percent change | pct: percent level |
+    multiple: x-times ratio | days | count | money | plain. Order matters."""
     k = str(key).lower()
+    if k.endswith("_pp") or "change_pp" in k:
+        return "pp"
+    if "growth" in k or "rel_change" in k or k.endswith("_rel") or k == "rel":
+        return "spct"
+    if k in ("capex_da", "capex_da_prior_year", "ccr", "ccr_prior_year") or "multiple" in k:
+        return "multiple"
     if (
         "pct" in k
-        or k.endswith("_rel")
-        or k == "rel"
-        or "rel_change" in k
         or "ratio" in k
-        or k in ("ccr", "caprate")
-        or "growth" in k
-        or "rate" in k
+        or "cap_rate" in k
+        or k in ("caprate", "roic", "margin")
+        or k.endswith("_rate")
+        or k.startswith(("roic", "tax_rate"))
     ):
-        return "ratio"
+        return "pct"
     if "days" in k or k.startswith(("dso", "dio", "dpo", "delta_dso", "delta_dio", "delta_dpo")):
         return "days"
     if "count" in k or "quarters" in k:
@@ -297,7 +377,8 @@ def fmt_money(v: float) -> str:
 
 
 def fmt_value(key: Any, value: Any) -> str:
-    """Per-metric formatting: days 1 dp, ratios 3 dp, counts integer, $ with unit."""
+    """One formatter for every surface: days 1 dp, percentages 1 dp (signed for
+    changes), multiples 2 dp with ×, counts as integers, money as $X.XB/$X.XM."""
     if value is None or isinstance(value, bool) or not isinstance(value, (int, float)):
         return fmt_num(value)
     v = float(value)
@@ -306,8 +387,14 @@ def fmt_value(key: Any, value: Any) -> str:
     kind = metric_kind(key)
     if kind == "days":
         return f"{v:,.1f} d"
-    if kind == "ratio":
-        return f"{v:.3f}"
+    if kind == "pp":
+        return f"{v * 100:+.1f} pp".replace("-", "−")
+    if kind == "spct":
+        return f"{v * 100:+,.1f}%".replace("-", "−")
+    if kind == "pct":
+        return f"{v * 100:,.1f}%".replace("-", "−")
+    if kind == "multiple":
+        return f"{v:,.2f}×"
     if kind == "count":
         return f"{v:,.0f}"
     if kind == "money":
@@ -329,11 +416,12 @@ def badge(sev: Any, label: str | None = None) -> str:
     return f'<span class="vx-badge {sev_class(sev)}">{esc(text)}</span>'
 
 
-def context_badge(sev: Any) -> str:
-    """Subdued outline badge for unscored, context-only flags (prior periods)."""
+def context_badge(sev: Any, note: str = "context") -> str:
+    """Subdued outline badge for unscored, context-only flags (prior periods,
+    10-Q footnote edits): grey dashed outline, severity only as a small dot."""
     return (
         f'<span class="vx-badge is-context {sev_class(sev)}" '
-        f'title="Prior period: shown for context, not scored">{esc(sev_label(sev))}</span>'
+        f'title="Shown for context, not scored">{esc(sev_label(sev))} · {esc(note)}</span>'
     )
 
 
@@ -395,8 +483,8 @@ def not_assessed(module_key: str, reason: Any, status: Any = None) -> str:
     )
 
 
-def section_header(title: str, count: int | None, desc: str) -> str:
-    cnt = f'<span class="vx-count">{count}</span>' if count is not None else ""
+def section_header(title: str, count: int | str | None, desc: str) -> str:
+    cnt = f'<span class="vx-count">{esc(count)}</span>' if count is not None else ""
     return one_line(
         f'<div class="vx"><div class="vx-section"><div class="vx-h2">{esc(title)}</div>{cnt}</div>'
         f'<div class="vx-section-desc">{esc(desc)}</div></div>'
@@ -761,6 +849,30 @@ def _kv(inputs: Mapping[str, Any], outputs: Mapping[str, Any]) -> str:
 PRIOR_CATEGORY = "accounting_prior_period"
 
 
+def _ord(value: Any) -> int:
+    if isinstance(value, (date, datetime)):
+        return value.toordinal()
+    if isinstance(value, str) and len(value) >= 10:
+        try:
+            return date.fromisoformat(value[:10]).toordinal()
+        except ValueError:
+            return 0
+    return 0
+
+
+def current_citations_first(cits: Sequence[Any], period_end: Any) -> list[Any]:
+    """Citations for the check's own period first (report_date == period_end),
+    then the rest by filing date, newest first."""
+    p = _ord(period_end)
+    return sorted(
+        cits,
+        key=lambda ct: (
+            0 if p and _ord(get(ct, "report_date")) == p else 1,
+            -_ord(get(ct, "filing_date")),
+        ),
+    )
+
+
 def is_context(finding: Any) -> bool:
     """Prior-period findings are context only and never scored."""
     return str(get(finding, "category", "")) == PRIOR_CATEGORY
@@ -811,7 +923,7 @@ def finding_card(finding: Any, index: int = 0) -> str:
         inputs = get(check, "inputs", {}) or {}
         outputs = get(check, "outputs", {}) or {}
         period = fmt_date(get(check, "period_end"))
-        cits = as_list(get(check, "citations"))
+        cits = current_citations_first(as_list(get(check, "citations")), get(check, "period_end"))
         shows_body = (
             (f'<div class="vx-formula">{esc(formula)}</div>' if formula else "")
             + _kv(
@@ -1029,10 +1141,15 @@ def check_header(check: Any) -> str:
     state_txt = state.replace("_", " ").lower() or "unknown"
     formula = get(check, "formula")
     annots = "".join(tag(human_text(a)) for a in as_list(get(check, "annotations")))
+    key, value = primary_value(check)
+    latest = (
+        f" · latest {fmt_value(key, value)}" if state == "COMPUTED" and value is not None else ""
+    )
     return one_line(
-        f'<div class="vx vx-checkhead"><div><div class="vx-label">{esc(get(check, "check_id"))} '
-        f"· {'scored' if scored else 'display only'} · {esc(state_txt)} · period "
-        f"{esc(fmt_date(get(check, 'period_end')))}</div>"
+        f'<div class="vx vx-checkhead"><div><div class="vx-label">'
+        f"{esc(check_label(get(check, 'check_id')))} · "
+        f"{'scored' if scored else 'display only'} · {esc(state_txt)} · period "
+        f"{esc(fmt_date(get(check, 'period_end')))}{esc(latest)}</div>"
         f"<div class='vx-h3'>{esc(get(check, 'title', 'Untitled check'))}</div>"
         + (f'<div class="vx-formula">{esc(formula)}</div>' if formula else "")
         + f'</div><div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">{annots}'
@@ -1043,19 +1160,18 @@ def check_header(check: Any) -> str:
 def display_metrics(checks: Sequence[Any]) -> str:
     tiles = []
     for i, c in enumerate(checks):
-        outputs = get(c, "outputs", {}) or {}
-        value: Any = None
-        if isinstance(outputs, Mapping) and outputs:
-            value = next(iter(outputs.values()))
+        key, value = primary_value(c)
         state = str(get(c, "state", ""))
-        shown = fmt_num(value) if state == "COMPUTED" else "n/m"
+        shown = fmt_value(key, value) if state == "COMPUTED" else "n/m"
         reason = get(c, "reason")
         annots = " · ".join(human_text(a) for a in as_list(get(c, "annotations")))
         sub = esc(get(c, "formula", ""))
-        foot = esc(human_reason(reason) if reason else (annots or "display only · never scored"))
+        foot = esc(
+            human_reason(reason) if reason else (annots or "shown for context, never scored")
+        )
         tiles.append(
             f'<div class="vx-metric-tile" style="--i:{i}"><div class="vx-label">'
-            f"{esc(get(c, 'check_id'))}</div><b>{shown}</b>"
+            f"{esc(check_label(get(c, 'check_id')))} · display only</div><b>{shown}</b>"
             f'<div style="font-size:14px;color:var(--text);margin-bottom:6px">'
             f"{esc(get(c, 'title', ''))}</div><div class='vx-p'>{sub}</div>"
             f'<div class="vx-p" style="margin-top:6px">{foot}</div></div>'
@@ -1173,7 +1289,9 @@ def footnote_edit_row(edit: Mapping[str, Any], index: int = 0) -> str:
     meta = tag(scope) + tag(kind.lower())
     if edit.get("softened"):
         meta += tag("modal softening")
-    sev_html = badge("WARNING") if scored else context_badge("WARNING")
+    sev_html = badge("WARNING") if scored else context_badge("WARNING", "unscored")
+    expl = edit.get("explanation")
+    expl_html = f'<div class="vx-edit-expl">{esc(expl)}</div>' if expl else ""
     period = fmt_date(edit.get("period"))
     return one_line(
         f'<div class="vx vx-edit {"is-context" if not scored else ""}" '
@@ -1183,7 +1301,7 @@ def footnote_edit_row(edit: Mapping[str, Any], index: int = 0) -> str:
         f'<div class="vx-edit-title">{esc(edit.get("note") or "Untitled note")}</div></div>'
         f"{sev_html}</div>"
         f'<div class="vx-edit-text">{inline_diff(edit.get("prior"), edit.get("current"), kind)}'
-        f'</div><div class="vx-annots">{meta}</div></div>'
+        f'</div>{expl_html}<div class="vx-annots">{meta}</div></div>'
     )
 
 

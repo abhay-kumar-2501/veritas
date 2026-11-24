@@ -359,7 +359,7 @@ def _mod(result: AnalysisResult, key: str) -> ModuleResult | None:
 
 
 def _not_assessed(reason: str | None, default: str) -> str:
-    return f"Not assessed: {_clip(reason or default, 160)}"
+    return f"Not assessed: {_clip(_h(reason or default), 160)}"
 
 
 # ---------------------------------------------------------------------------
@@ -498,11 +498,15 @@ def _score_box(result: AnalysisResult) -> Table:
     total = 0
     for cat, pts in sc.deductions:
         total += pts
-        ded_rows.append([_p(_esc(cat.capitalize()), S_CELL), _p(f"-{pts}", S_MONO_R)])
+        ded_rows.append(
+            [_p(_esc(cat.capitalize()), S_CELL), _p(f"-{pts}" if pts else "0", S_MONO_R)]
+        )
     if not sc.deductions:
         ded_rows.append([_p("No deductions", S_CELL), _p("0", S_MONO_R)])
     else:
-        ded_rows.append([_p("Total (capped)", S_CELL_B), _p(f"-{total}", S_MONO_R)])
+        ded_rows.append(
+            [_p("Total (capped)", S_CELL_B), _p(f"-{total}" if total else "0", S_MONO_R)]
+        )
     dt = Table(ded_rows, colWidths=[150, 50], hAlign="LEFT")
     dt.setStyle(_grid_style(len(ded_rows)))
     right.append(Spacer(1, 2))
@@ -553,8 +557,51 @@ _OUT_LABEL = {
 }
 
 
+_METRIC_NAME = {
+    "nongaap_eps": "Non-GAAP EPS",
+    "adj_ebitda": "Adjusted EBITDA",
+    "m_and_a": "M&A",
+    "tsr": "TSR",
+    "fcf": "Free cash flow",
+    "roic": "ROIC",
+    "revenue": "Revenue",
+    "capex_da": "CapEx / D&A",
+    "capex_da_prior_year": "CapEx / D&A prior yr",
+    "capex_da_rel_change": "CapEx / D&A chg",
+    "fcf_sbc": "FCF - SBC",
+    "restated_metric_count": "Restated metrics",
+    "tax_rate": "Tax rate",
+    "nopat": "NOPAT",
+    "invested_capital": "Invested capital",
+}
+_SNAKE_RE = re.compile(r"\b[A-Za-z0-9]+(?:_[A-Za-z0-9]+)+\b")
+
+
+def _h(text: str) -> str:
+    """Humanise snake_case / ID tokens in engine-authored text."""
+
+    def sub(m: re.Match[str]) -> str:
+        tok = m.group(0)
+        return _METRIC_NAME.get(tok.lower(), tok.replace("_", " ").lower())
+
+    return _SNAKE_RE.sub(sub, text)
+
+
+def _metric_name(metric: str) -> str:
+    return _METRIC_NAME.get(metric.lower(), _h(metric))
+
+
+def _status_label(status: str) -> str:
+    return status.replace("_", " ")
+
+
 def _out_label(key: str) -> str:
-    return _OUT_LABEL.get(key.lower(), key.replace("_", " ").strip().capitalize())
+    low = key.lower()
+    if low in _OUT_LABEL:
+        return _OUT_LABEL[low]
+    if low in _METRIC_NAME:
+        return _METRIC_NAME[low]
+    return key.replace("_", " ").strip().capitalize()
 
 
 def _fmt_out(key: str, v: float | None) -> str:
@@ -575,6 +622,7 @@ def _fmt_out(key: str, v: float | None) -> str:
 def _formula_head(formula: str, limit: int = 110) -> str:
     """First sentence/clause of a formula, only if it fits whole."""
     formula = re.sub(r"\s*\((?:WARNING|CRITICAL)[^)]*\)", "", formula)
+    formula = re.sub(r"\b([A-Za-z]+)_([A-Za-z0-9]+)\b", r"\1(\2)", formula)
     head = re.split(r";\s|\.\s", formula.strip(), maxsplit=1)[0].rstrip(".")
     return head if 0 < len(head) <= limit else ""
 
@@ -645,7 +693,7 @@ def _finding_block(
             [
                 _p(f"{rank}", _style("rk", fontName="Courier-Bold", fontSize=9, leading=11)),
                 pill,
-                _p(_esc(_clip(f.title, 110)), S_TITLE),
+                _p(_esc(_clip(_h(f.title), 110)), S_TITLE),
                 _p(
                     f'<font name="Courier" color="#6B7280">{_esc(cat)}&nbsp;&nbsp;{pts_txt}</font>',
                     _style("fh", fontSize=6.6, leading=8, alignment=TA_RIGHT),
@@ -670,7 +718,7 @@ def _finding_block(
     metric = _metric_line(f)
     show_expl = detail >= 2 or (detail == 1 and not quote and not metric)
     if show_expl and f.explanation:
-        body.append(_p(_esc(_clip(f.explanation, 230)), S_SMALL))
+        body.append(_p(_esc(_clip(_h(f.explanation), 230)), S_SMALL))
         body.append(Spacer(1, 2))
     if quote and detail >= 1:
         body.append(_p(f"\u201c{_esc(_clip(quote, quote_cap))}\u201d", S_QUOTE))
@@ -1048,7 +1096,7 @@ def _proxy_block(result: AnalysisResult, n_metrics: int, n_flags: int) -> list[F
             src = str(extra.get("source") or cit.get("section") or "")
             rows.append(
                 [
-                    _p(_esc(str(m.get("metric") or "n/a")), S_CELL_B),
+                    _p(_esc(_metric_name(str(m.get("metric") or "n/a"))), S_CELL_B),
                     _p(_esc(_clip(str(m.get("context") or ""), 40)), S_CELL),
                     _p(_esc(wtxt), S_MONO_R),
                     _p(_esc(_clip(src, 40)), S_MUTED),
@@ -1065,8 +1113,8 @@ def _proxy_block(result: AnalysisResult, n_metrics: int, n_flags: int) -> list[F
         for f in flags[:n_flags]:
             out.append(
                 _p(
-                    f"<b>{_esc(_sev_label(f.severity))}</b>&nbsp;&nbsp;<b>{_esc(f.title)}</b>"
-                    f": {_esc(_clip(f.explanation, 170))}",
+                    f"<b>{_esc(_sev_label(f.severity))}</b>&nbsp;&nbsp;<b>{_esc(_h(f.title))}</b>"
+                    f": {_esc(_clip(_h(f.explanation), 170))}",
                     S_CELL,
                 )
             )
@@ -1106,7 +1154,7 @@ def _method_block(result: AnalysisResult, short: bool) -> list[Flowable]:
     mods = []
     for k in ("A", "B", "C"):
         m = _mod(result, k)
-        mods.append(f"{k}: {m.status if m else 'not run'}")
+        mods.append(f"{k}: {_status_label(m.status) if m else 'not run'}")
     out.append(Spacer(1, 2))
     out.append(_p(_esc("Module status  " + "  |  ".join(mods)), S_MONO))
     return out

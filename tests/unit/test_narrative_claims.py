@@ -256,3 +256,27 @@ def test_strategic_adjective_is_not_intent() -> None:
     )
     sec = Section(status="OK", text=sentence, word_count=len(sentence.split()), label="10-K")
     assert [c.cluster for c in extract_claims(sec, _doc())] == ["MARGIN"]
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        # BA 10-K: the intent word follows the claim, so the claim stands.
+        "Outside of the U.S., we are seeing similar solid demand as governments prioritize "
+        "security, defense technology and global cooperation given evolving threats.",
+        "Revenue grew 14% on strong demand from airlines, and we continue to focus on quality.",
+    ],
+)
+def test_intent_after_cluster_match_is_accepted(sentence: str) -> None:
+    sec = Section(status="OK", text=sentence, word_count=len(sentence.split()), label="10-K")
+    claims = extract_claims(sec, _doc())
+    assert [c.cluster for c in claims] == ["DEMAND"]
+    assert claims[0].citation.quote_raw == sentence
+
+
+def test_strategy_noun_rejects_even_after_match() -> None:
+    sentence = (
+        "Robust demand for our services in fiscal 2025 reflected the success of our strategy."
+    )
+    sec = Section(status="OK", text=sentence, word_count=len(sentence.split()), label="10-K")
+    assert extract_claims(sec, _doc()) == ()
