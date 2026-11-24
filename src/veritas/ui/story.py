@@ -27,7 +27,8 @@ def term(text: str, key: str | None = None) -> str:
     if not tip:
         return esc(text)
     return (
-        f'<span class="vx-term" tabindex="0" title="{esc(tip)}" data-tip="{esc(tip)}">'
+        f'<span class="vx-term" tabindex="0" aria-label="{esc(text)}: {esc(tip)}" '
+        f'data-tip="{esc(tip)}">'
         f"{esc(text)}</span>"
     )
 
@@ -48,7 +49,7 @@ def glossary_html() -> str:
 def hero() -> str:
     return one_line(
         '<div class="vx vx-hero">'
-        '<div class="vx-label vx-hero-kicker">A fact-checker for company reports</div>'
+        '<div class="vx-label vx-hero-kicker">A second look at company reports</div>'
         '<div class="vx-wordmark">VERITAS<span>.</span></div>'
         '<div class="vx-tagline"><em>What companies say.</em> <b>What their numbers show.</b>'
         "</div>"
@@ -68,15 +69,16 @@ def story_steps() -> str:
             "Read what they said",
             "We pull the managers' own words from annual and quarterly reports and "
             "earnings releases.",
-            '<div class="vx-step-demo is-quote">“Demand was exceptionally strong '
-            "this quarter.”</div>",
+            '<div class="vx-step-demo is-quote"><em class="vx-demo-tag">Example</em>'
+            "“Demand was exceptionally strong this quarter.”</div>",
         ),
         (
             "2",
             "Check the receipts",
             "We line those words up with the exact figures the company reported for the "
             "same period.",
-            '<div class="vx-step-demo is-numbers"><span>Sales</span><b class="up">↑ +12%</b>'
+            '<div class="vx-step-demo is-numbers"><em class="vx-demo-tag">Example</em>'
+            '<span>Sales</span><b class="up">↑ +12%</b>'
             '<span>Cash collected</span><b class="down">↓ −8%</b></div>',
         ),
         (
@@ -84,7 +86,8 @@ def story_steps() -> str:
             "Show where they disagree",
             "Gaps are flagged, explained in plain English, and linked to the source so you can "
             "check them yourself.",
-            '<div class="vx-step-demo is-flag"><i>≠</i><span>Worth a closer look</span></div>',
+            '<div class="vx-step-demo is-flag"><em class="vx-demo-tag">Example</em><i>≠</i>'
+            "<span>Worth a closer look</span></div>",
         ),
     )
     cells = "".join(
@@ -96,7 +99,8 @@ def story_steps() -> str:
     return one_line(
         '<div class="vx vx-steps-wrap"><div class="vx-steps">'
         f"{cells}</div>"
-        '<div class="vx-steps-note">Illustration only. Real results use real filings.</div>'
+        '<div class="vx-steps-note">The examples above are made up to show the idea. Pick a '
+        "company to see real results from real filings.</div>"
         "</div>"
     )
 
@@ -122,11 +126,12 @@ def how_it_works() -> str:
             "A": "Five checks on the numbers (how fast customers pay, how much stock piles up, "
             "whether profit turns into cash...), each set next to what managers said about "
             "the same quarter.",
-            "B": "Companies quietly edit the detailed notes under their financial statements "
-            "each year. We compare them sentence by sentence and highlight what was added, "
-            "removed or softened.",
+            "B": "Companies update the detailed notes under their financial statements every "
+            "year, mostly for routine reasons. We compare them sentence by sentence and "
+            "highlight added, removed or softened sentences worth reading.",
             "C": "People manage toward what they are paid for. We find which numbers "
-            "executives' bonuses depend on, and check those numbers against the cash.",
+            "executives' bonuses depend on, and flag when those sit next to heavy stock-based "
+            "pay or acquisition-driven goodwill.",
             "D": "Everything above rolls up into a 0–100 score. Checks we could not run "
             "are listed, never counted as a pass.",
         }[key]
@@ -214,9 +219,10 @@ def view_intro(title: str, body: str) -> str:
 VIEW_INTROS: dict[str, tuple[str, str]] = {
     "overview": (
         "How to read this",
-        "Each card puts what managers wrote (left) next to the numbers for the same period "
-        "(right). A ≠ sign means the two point in different directions. Red is a big "
-        "gap, amber is worth a closer look, green raised no flag.",
+        "Each card opens with a plain-English line, then puts what managers wrote next to the "
+        "numbers for the same period. A ≠ sign marks a statement and a measure that sit "
+        "uneasily together. Red is a big gap, amber is worth a closer look, green raised no "
+        "flag.",
     ),
     "redline": (
         "What you are looking at",

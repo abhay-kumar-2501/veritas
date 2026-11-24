@@ -52,8 +52,8 @@ def test_static_copy_has_no_banned_words() -> None:
     [
         (100, "The story"),
         (85, "The story"),
-        (84, "Mostly"),
-        (60, "Mostly"),
+        (84, "A mixed"),
+        (60, "A mixed"),
         (59, "Several"),
         (None, "Not enough"),
     ],
@@ -134,7 +134,7 @@ def test_verdict_points_mirror_scored_findings(ticker: str) -> None:
     )
     assert len(v.points) == expected
     # severities of the accounting points equal the findings' severities
-    a_points = [p for p in v.points if p.view == "[1] Overview"]
+    a_points = [p for p in v.points if p.view == "below"]
     assert sorted(p.severity for p in a_points) == sorted(f.severity for f in a_flags)
     n10k = sum(1 for e in edits if e["form"] == "10-K")
     if n10k:
@@ -177,3 +177,82 @@ def test_boeing_c1_plain_uses_engine_amounts() -> None:
     s = plain.incentive_plain(c1)
     assert s is not None
     assert "$444M" in s and "$16M" in s
+
+
+# --- Fable review blockers (D-611) -------------------------------------------------
+
+
+@seeded
+@pytest.mark.parametrize("ticker", SEED_TICKERS)
+def test_b1_no_claim_that_management_said_nothing(ticker: str) -> None:
+    r = _r(ticker)
+    for f in r.modules["A"].findings:
+        s = plain.finding_plain(f, "X") or ""
+        assert "no comment" not in s
+        if f.check is not None and f.check.check_id == "A3_ACCRUALS":
+            assert "text scan" not in s  # the engine never pairs statements with A3
+
+
+@seeded
+@pytest.mark.parametrize("ticker", SEED_TICKERS)
+def test_b2_guard_never_claims_non_escalation(ticker: str) -> None:
+    r = _r(ticker)
+    v = plain.verdict(r, footnote_edits(r.modules["B"]))
+    for t in _all_text(v):
+        assert "not escalated" not in t
+        assert "escalat" not in t
+
+
+def test_b3_c1_compares_amounts_correctly() -> None:
+    more = {
+        "id": "C1",
+        "explanation": "A non-GAAP measure is used in incentive pay while SBC "
+        "$444M vs free cash flow $16M (TTM); FCF − SBC = −$428M. Flagged.",
+    }
+    half = {
+        "id": "C1",
+        "explanation": "A non-GAAP measure is used in incentive pay while SBC "
+        "$600M vs free cash flow $1.0B (TTM); FCF − SBC = $400M. Flagged.",
+    }
+    s1, s2 = plain.incentive_plain(more), plain.incentive_plain(half)
+    assert s1 and "more than the $16M" in s1 and "all employees" in s1
+    assert s2 and "equal to 60% of the $1.0B" in s2 and "more than" not in s2
+    for s in (s1, s2):
+        assert "it paid" not in s and "often leaves out" not in s
+        assert "did not check what this company's figure excludes" in s
+
+
+def test_b4_matched_term_not_overclaimed() -> None:
+    s = plain.edit_plain(
+        {
+            "note": "Revenue",
+            "kind": "INSERTED",
+            "explanation": "A sentence was added in the Revenue note that cites "
+            "'recognized'. Flagged for review.",
+        }
+    )
+    assert "accounting terms we watch for" in s
+    assert "usually signals" not in s
+
+
+@seeded
+@pytest.mark.parametrize("ticker", SEED_TICKERS)
+def test_b5_no_data_checks_are_not_listed_as_passing(ticker: str) -> None:
+    from veritas.engine.narrative import _has_no_data
+
+    r = _r(ticker)
+    v = plain.verdict(r, footnote_edits(r.modules["B"]))
+    for k in r.modules["A"].checks:
+        cp = plain.CHECK_PLAIN.get(k.check_id)
+        if cp is None or not k.check_id.startswith("A"):
+            continue
+        if k.state != "COMPUTED" or _has_no_data(k):
+            assert cp.name not in v.good, (ticker, k.check_id)
+            assert any(u.startswith(cp.name) for u in v.unchecked), (ticker, k.check_id)
+
+
+def test_trend_uses_displayed_values() -> None:
+    # displayed values are 119 and 106, so the stated change must be 13, not 14
+    assert plain._trend(119.33, 105.63, "days") == "up 13 days from"
+    assert plain._trend(40.83, 40.0, "days") == "up 1 day from"
+    assert plain._trend(40.2, 39.9, "days") == "about the same as"

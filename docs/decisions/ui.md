@@ -134,3 +134,22 @@ Goal: a reader with no finance background understands what VERITAS does and what
 - **Analogies** ("a payslip that says $100 while only $70 lands in your bank") explain each check's idea. They are fixed per check and never carry company numbers.
 - **Jargon tips.** Dotted-underline terms show a definition on hover or keyboard focus (CSS only). A "Jargon buster" glossary sits in the footer.
 - **Landing.** The tagline is now "What companies say. What their numbers show." It is followed by a three-step explainer whose demo values are labelled as an illustration. The four modules are phrased as questions, and analyst commands are moved to a "For analysts" row.
+
+### D-611 Fable review of the plain layer: fixes  (2026-11-24, M7)
+- **B1.** Unpaired flags no longer say "we found no comment". They now say the text scan did not pair a statement and that it only looks for certain kinds of statements. Profit-vs-cash says nothing about statements, because the engine never pairs any with A3.
+- **B2.** The acquisition-guard note says the measure "can distort; read with extra caution". It never claims a non-escalation, since the guard only caps CRITICAL at WARNING.
+- **B3.** The pay sentence compares the parsed amounts: "more than" only when stock pay exceeds free cash flow, otherwise "equal to N% of". It names stock pay as company-wide and states that we did not check what the adjusted figure excludes.
+- **B4.** A matched footnote term is described as "one of the accounting terms we watch for", not as a signal of risk.
+- **B5.** A check with no underlying data (`narrative._has_no_data`), or one that is not computable or not applicable, is listed under "Could not check" with a plain reason, never under "No flag raised".
+- **Other fixes:**
+  - Day changes are computed from the displayed (rounded) values, with a singular unit for 1.
+  - Days-to-get-paid is phrased as "owed the equivalent of N days of sales".
+  - The profit-vs-cash sentence adds the gap as a share of average assets, which is what drives its severity.
+  - The payslip analogy no longer carries a number.
+  - The middle headline band reads "A mixed picture".
+  - Deductions read "Warning signs in the numbers"; the ring caption reads "points come off for each flag".
+  - Landing tone softened, and each demo box is tagged "Example".
+  - Overview section titles are plainer, and a glossary sits above the score.
+  - Redline defaults to "Material edits only".
+  - On Ratios, the explainer sits above the formula.
+  - Footnote explanations are keyed by (form, sentence).

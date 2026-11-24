@@ -96,12 +96,16 @@ def footnote_edits(mod_b: Any) -> list[dict[str, Any]]:
     if not isinstance(pairs, Mapping):
         return []
     # The engine's explanation for each material edit, keyed by the cited sentence.
-    explain: dict[str, str] = {}
+    # Keyed by (form, sentence): the same sentence can be added in the 10-K pair and
+    # removed in the 10-Q pair, with different explanations.
+    explain: dict[tuple[str, str], str] = {}
     for f in c.as_list(c.get(mod_b, "findings")):
+        fid = str(c.get(f, "id", ""))
+        fform = "10-Q" if "-10-Q-" in fid else "10-K" if "-10-K-" in fid else ""
         for cit in c.as_list(c.get(f, "citations")):
             q = c.get(cit, "quote_raw")
             if q and c.get(f, "explanation"):
-                explain.setdefault(str(q), str(c.get(f, "explanation")))
+                explain.setdefault((fform, str(q)), str(c.get(f, "explanation")))
     edits: list[dict[str, Any]] = []
     for form, pair in pairs.items():
         if not isinstance(pair, Mapping):
@@ -124,8 +128,8 @@ def footnote_edits(mod_b: Any) -> list[dict[str, Any]]:
                         "prior": row.get("prior"),
                         "current": row.get("current"),
                         "softened": row.get("softened"),
-                        "explanation": explain.get(str(row.get("current") or ""))
-                        or explain.get(str(row.get("prior") or "")),
+                        "explanation": explain.get((str(form), str(row.get("current") or "")))
+                        or explain.get((str(form), str(row.get("prior") or ""))),
                     }
                 )
     # Scored 10-K edits first, then 10-Q context; latest period first within each.
@@ -148,6 +152,8 @@ def render_overview(result: Any) -> None:
             plain.verdict(result, all_edits), company, c.score_band(c.get(score, "score"))
         )
     )
+    with st.expander("New to this? The terms used below, in plain English"):
+        _md(story.glossary_html())
     _md(c.score_panel(score, SCORE_NAME, _caps(), statuses, plain.DEDUCTION_PLAIN))
     _md(c.module_chips(statuses, c.get(score, "score") is not None))
     sections_src = _extra(mods.get("A")).get("sections")
@@ -185,20 +191,20 @@ def render_overview(result: Any) -> None:
 
     sections = (
         (
-            "Contradictions",
+            "Where a statement and the numbers sit uneasily",
             contra,
             "Management's statement and the numbers for the same period point in different "
             "directions. Latest period first." + scope,
             ("No contradictions", "No paired statement diverges from the numbers at this filter."),
         ),
         (
-            "Unaddressed divergences",
+            "Flags with no paired statement",
             unaddressed,
             "Accounting flags with no matching management statement." + scope,
             ("No unaddressed divergences", "Every flag at this filter has a paired statement."),
         ),
         (
-            "Claims consistent with numbers",
+            "Statements next to unflagged numbers",
             consistent,
             "Statements whose paired screens raised no flag. Absence of a flag is not "
             "verification." + scope,
@@ -389,7 +395,7 @@ def render_redline(result: Any) -> None:
                 key=f"_rl_note_{pair_key}",
             )
         with col_tog:
-            only_material = st.toggle("Material edits only", key=f"_rl_mat_{pair_key}")
+            only_material = st.toggle("Material edits only", value=True, key=f"_rl_mat_{pair_key}")
         note = notes[note_idx or 0]
         rows = [r for r in c.as_list(note.get("rows")) if isinstance(r, Mapping)]
         counts = note.get("counts")
@@ -512,8 +518,8 @@ def render_ratios(result: Any) -> None:
     for check in scored:
         cid = str(c.get(check, "check_id", "check"))
         with st.container(key=f"ratio_{cid}"):
-            _md(c.check_header(check))
             _md(story.check_explainer(cid))
+            _md(c.check_header(check))
             fig = charts.check_figure(cid, str(c.get(check, "title", cid)), c.get(check, "history"))
             if fig is not None:
                 st.plotly_chart(

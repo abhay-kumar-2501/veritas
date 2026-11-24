@@ -20,7 +20,8 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Any
 
-from veritas.ui.components import as_list, fmt_money, get
+from veritas.engine.narrative import _has_no_data
+from veritas.ui.components import as_list, fmt_money, get, human_reason
 
 # ---------------------------------------------------------------------------
 # Vocabulary
@@ -34,7 +35,7 @@ SEVERITY_PLAIN: dict[str, str] = {
 
 # Plain names for the scored deduction categories (score panel).
 DEDUCTION_PLAIN: dict[str, str] = {
-    "accounting": "Numbers that don't fit the story",
+    "accounting": "Warning signs in the numbers",
     "footnotes": "Edits to the fine print",
     "hedging": "More cautious wording",
     "incentives": "How executives are paid",
@@ -66,8 +67,8 @@ class CheckPlain:
 CHECK_PLAIN: dict[str, CheckPlain] = {
     "A1_DSO": CheckPlain(
         "Days to get paid",
-        "How long do customers take to pay for what they bought?",
-        "If customers take longer and longer to pay, reported sales can be running ahead "
+        "How many days of sales do customers still owe the company?",
+        "If what customers owe grows faster than sales, reported sales can be running ahead "
         "of the cash actually coming in.",
         "Like a shop where more customers each month say “put it on my tab”.",
     ),
@@ -81,20 +82,21 @@ CHECK_PLAIN: dict[str, CheckPlain] = {
     "A3_ACCRUALS": CheckPlain(
         "Profit vs. actual cash",
         "Does the profit the company reports turn into real cash?",
-        "Profit is an accounting figure built partly on estimates; cash is what actually "
-        "arrives. A persistent gap means more of the profit rests on estimates that have "
-        "not yet turned into cash.",
-        "Like a payslip that says $100 while only $70 lands in your bank account.",
+        "Profit is an accounting figure that includes amounts not yet received; cash is what "
+        "actually arrives. A gap means part of the profit has not yet shown up as cash.",
+        "Like a payslip that shows more than what actually lands in your bank account.",
     ),
     "A4_CAPRATE": CheckPlain(
-        "Costs treated as investments",
-        "Is the company recording more of its spending as long-term investment?",
-        "Spending recorded as an investment is spread over future years instead of "
-        "reducing this year's profit, so a rising share flatters current profit.",
-        "Like calling this month's grocery bill a “long-term investment”.",
+        "Software costs recorded as assets",
+        "Is the company recording more of its software development spending as a long-term asset?",
+        "Software spending recorded as an asset is spread over future years instead of "
+        "reducing this year's profit, so a rising share lifts current profit. The treatment "
+        "is allowed; the check watches the trend.",
+        "Like spreading the cost of a new laptop over three years instead of counting it all "
+        "today.",
     ),
     "A5_RESTRUCT": CheckPlain(
-        "“One-time” costs that keep coming back",
+        "Repeated restructuring costs",
         "Do supposedly one-off restructuring costs show up again and again?",
         "Costs that recur every year are part of the normal cost of doing business, even "
         "when they are labelled one-time.",
@@ -164,7 +166,7 @@ GLOSSARY: dict[str, str] = {
     "rules (for example “adjusted EBITDA” or “core EPS”).",
     "SBC": "Stock-based compensation: paying employees in company shares instead of cash.",
     "Goodwill": "The extra amount paid when buying another company, above the value of its "
-    "identifiable assets.",
+    "net identifiable assets.",
 }
 
 
@@ -238,8 +240,8 @@ def numbers_sentence(check: Any, company: str) -> str | None:
             return None
         trend = _trend(cur, prior, unit="days")
         return (
-            f"In the quarter ending {when}, {company}'s customers took about {_days(cur)} "
-            f"to pay, {trend} a year earlier ({_days(prior)})."
+            f"At the end of {when}, {company}'s customers owed it the equivalent of about "
+            f"{_days(cur)} of sales, {trend} a year earlier ({_days(prior)})."
         )
     if cid == "A2_DIO":
         cur, prior = _num(outputs.get("dio")), _num(outputs.get("dio_prior_year"))
@@ -258,12 +260,18 @@ def numbers_sentence(check: Any, company: str) -> str | None:
             f"Over the 12 months to {when}, {company} reported {fmt_money(ni)} of profit "
             f"and brought in {fmt_money(ocf)} of cash from running the business"
         )
+        ar = _num(outputs.get("accrual_ratio"))
+        size = (
+            f" The gap equals about {ar * 100:,.0f}% of the company's average total assets."
+            if ar is not None and ar > 0 and ocf < ni
+            else ""
+        )
         if ni > 0:
             cents = ocf / ni * 100
             if cents < 100:
-                return base + f": about {cents:,.0f}¢ of cash for every $1 of profit."
+                return base + f": about {cents:,.0f}\u00a2 of cash for every $1 of profit." + size
             return base + ": more cash than profit."
-        return base + "."
+        return base + "." + size
     if cid == "A5_RESTRUCT":
         n4 = _num(outputs.get("material_quarters_last4"))
         if n4 is None:
@@ -277,16 +285,20 @@ def numbers_sentence(check: Any, company: str) -> str | None:
 
 
 def _trend(cur: float, prior: float, unit: str) -> str:
-    diff = cur - prior
-    if abs(diff) < 0.5:
+    """Change between the two values as displayed (rounded), so the arithmetic on screen
+    adds up; the unit is singular for 1."""
+    diff = round(cur) - round(prior)
+    if diff == 0:
         return "about the same as"
-    return f"{'up' if diff > 0 else 'down'} {abs(diff):,.0f} {unit} from"
+    word = unit[:-1] if abs(diff) == 1 and unit.endswith("s") else unit
+    return f"{'up' if diff > 0 else 'down'} {abs(diff):,} {word} from"
 
 
 _ANNOT_PLAIN: dict[str, str] = {
-    "acquisition-distorted": "Recent acquisitions (deal spending or a jump in goodwill above "
-    "our threshold) can distort this measure, so it was not escalated to a bigger flag.",
-    "restatement": "Some figures were later revised by the company; the revised values are used.",
+    "acquisition-distorted": "Goodwill or spending on acquisitions jumped over the past year "
+    "(usually a sign of buying other businesses), which can distort this measure; read it "
+    "with extra caution.",
+    "restated": "The company later revised some of these figures; the revised values are used.",
 }
 
 
@@ -321,13 +333,25 @@ def finding_plain(finding: Any, company: str) -> str | None:
         ),
         None,
     )
+    prefix = (
+        "Earlier period, not scored. "
+        if str(get(finding, "category", "")) == "accounting_prior_period"
+        else ""
+    )
     if get(finding, "contradiction", False) and topic:
         return (
-            f"Management pointed to {topic}, but the numbers for the same period point the "
-            f"other way: {_lower_first(numbers)}"
+            f"{prefix}Management pointed to {topic}, while this measure moved in a direction "
+            f"that can sit uneasily with that: {_lower_first(numbers)}"
         )
     if sev in ("CRITICAL", "WARNING") and not claims:
-        return f"{numbers} We found no comment on this in management's discussion for that period."
+        cid = str(get(check, "check_id", ""))
+        if cid == "A3_ACCRUALS":  # no statement type is ever paired with this check
+            return prefix + numbers
+        return (
+            f"{prefix}{numbers} Our text scan did not pair a management statement with this "
+            "measure (it only looks for certain kinds of statements, such as claims about "
+            "demand or margins)."
+        )
     if sev == "NO_FLAG" and topic:
         return (
             f"Management pointed to {topic}, and this measure raised no flag: "
@@ -347,6 +371,14 @@ _GW = re.compile(r"goodwill is (\S+) of assets")
 _TERM = re.compile(r"cites '([^']+)'")
 
 
+def _money_value(text: str) -> float | None:
+    m = re.fullmatch(r"(\u2212|-)?\$([\d,.]+)([KMB]?)", text.strip().rstrip(";,"))
+    if not m:
+        return None
+    v = float(m.group(2).replace(",", "")) * {"": 1, "K": 1e3, "M": 1e6, "B": 1e9}[m.group(3)]
+    return -v if m.group(1) else v
+
+
 def incentive_plain(finding: Any) -> str | None:
     fid = str(get(finding, "id", ""))
     expl = str(get(finding, "explanation", "") or "")
@@ -354,29 +386,41 @@ def incentive_plain(finding: Any) -> str | None:
         parts = []
         m = _SBC_FCF.search(expl)
         if m:
-            parts.append(
-                f"over the last 12 months it paid {m.group(1)} in stock, more than the "
-                f"{m.group(2)} of free cash the business produced"
-            )
+            sbc, fcf = _money_value(m.group(1)), _money_value(m.group(2))
+            if sbc is not None and fcf is not None and fcf > 0:
+                cmp = "more than" if sbc > fcf else f"equal to {sbc / fcf * 100:,.0f}% of"
+                parts.append(
+                    f"{m.group(1)} of stock-based pay to all employees, {cmp} the "
+                    f"{m.group(2)} of free cash flow the business produced"
+                )
         m = _SBC_REV.search(expl)
         if m:
-            parts.append(
-                f"stock pay over the last 12 months was {m.group(1)}, equal to {m.group(2)} "
-                "of revenue"
-            )
-        tail = (" Here, " + "; and ".join(parts) + ".") if parts else ""
+            parts.append(f"{m.group(1)} of stock-based pay, equal to {m.group(2)} of revenue")
+        tail = (
+            " Over the last 12 months the company recorded " + "; and ".join(parts) + "."
+            if parts
+            else ""
+        )
         return (
-            "Part of executives' pay is tied to an adjusted (“non-GAAP”) profit "
-            "figure, which the company defines itself and which often leaves out the cost of "
-            "paying staff in shares." + tail
+            "Part of executives' pay depends on an adjusted (\u201cnon-GAAP\u201d) figure, one "
+            "the company defines itself." + tail + " Some adjusted figures leave stock-based "
+            "pay out; we did not check what this company's figure excludes."
         )
     if fid == "C2":
         m = _GW.search(expl)
-        share = f" Goodwill now makes up {m.group(1)} of assets." if m else ""
+        bits = []
+        if "rose" in expl:
+            bits.append("its share of assets rose over the past year")
+        if "acquisition guard" in expl:
+            bits.append("goodwill or acquisition spending jumped recently")
+        share = f" Goodwill makes up {m.group(1)} of assets" if m else " Goodwill is large"
         return (
-            "Executives are partly paid for revenue or deal-driven growth while the company's "
-            "goodwill (the premium paid for businesses it bought) is large and rising. Growth "
-            "that is bought can lift a pay metric without the existing business growing." + share
+            "Executives are partly paid for revenue or deal-driven growth, and the company "
+            "carries a lot of goodwill (the premium paid for businesses it bought)."
+            + share
+            + (", and " + " and ".join(bits) if bits else "")
+            + ". Growth that is bought can lift a pay metric without the existing business "
+            "growing."
         )
     return None
 
@@ -395,16 +439,28 @@ def edit_plain(edit: Mapping[str, Any]) -> str:
         s += " The new wording is less definite (for example “will” became “may”)."
     m = _TERM.search(str(edit.get("explanation") or ""))
     if m:
-        s += (
-            f" It mentions “{m.group(1)}”, a word that usually signals an estimate, "
-            "a risk or a legal matter."
-        )
+        s += f" It contains “{m.group(1)}”, one of the accounting terms we watch for."
     return s
 
 
 # ---------------------------------------------------------------------------
 # Verdict (top of the company page)
 # ---------------------------------------------------------------------------
+
+
+_REASON_PLAIN: tuple[tuple[str, str], ...] = (
+    ("immaterial", "customer balances are under 2% of yearly sales, too small to test"),
+    ("no inventory tag", "the inventory figure isn't reported under a standard tag we can read"),
+    ("capitalized software not tagged", "the company doesn't report this figure separately"),
+)
+
+
+def _reason_plain(reason: Any) -> str:
+    low = str(reason or "").lower()
+    for key, text in _REASON_PLAIN:
+        if key in low:
+            return text
+    return human_reason(reason) or "the figures needed aren't reported"
 
 
 @dataclass(frozen=True)
@@ -432,7 +488,7 @@ def headline_for(score: Any) -> str:
     if s >= 85:
         return "The story and the numbers largely line up."
     if s >= 60:
-        return "Mostly consistent, with a few things worth a closer look."
+        return "A mixed picture: some things worth a closer look."
     return "Several places where the story and the numbers pull apart."
 
 
@@ -476,7 +532,7 @@ def verdict(result: Any, edits: Sequence[Mapping[str, Any]] = ()) -> Verdict:
                 str(get(f, "severity")),
                 cp.name,
                 f"{text} {cp.why}{extra}",
-                "[1] Overview",
+                "below",
                 cp.analogy,
             )
         )
@@ -487,7 +543,7 @@ def verdict(result: Any, edits: Sequence[Mapping[str, Any]] = ()) -> Verdict:
         text = incentive_plain(f)
         if text:
             sev = str(get(f, "severity"))
-            points.append(Point(sev, "How executives are paid", text, "[4] Proxy"))
+            points.append(Point(sev, "How executives are paid", text, "the Proxy tab"))
 
     scored_edits = [e for e in edits if str(e.get("form")) == "10-K"]
     if scored_edits:
@@ -512,8 +568,10 @@ def verdict(result: Any, edits: Sequence[Mapping[str, Any]] = ()) -> Verdict:
                 f"{company} made {n} notable {'edit' if n == 1 else 'edits'} to the notes in "
                 f"its latest annual report compared with the year before"
                 + where
-                + ". Each one is shown word by word.",
-                "[2] Redline",
+                + (
+                    ". It is shown word by word." if n == 1 else ". Each one is shown word by word."
+                ),
+                "the Redline tab",
             )
         )
 
@@ -525,30 +583,25 @@ def verdict(result: Any, edits: Sequence[Mapping[str, Any]] = ()) -> Verdict:
                 "More cautious wording",
                 f"{company}'s notes use noticeably more hedge words (such as “may” "
                 "or “could”) than a year earlier.",
-                "[2] Redline",
+                "the Redline tab",
             )
         )
 
     good: list[str] = []
-    a_checks = [
-        k
-        for k in as_list(get(mods.get("A"), "checks"))
-        if str(get(k, "check_id", "")).startswith("A")
-        and str(get(k, "state")) == "COMPUTED"
-        and str(get(k, "severity")) == "NO_FLAG"
-    ]
-    for k in a_checks:
-        cp = CHECK_PLAIN.get(str(get(k, "check_id")))
-        if cp:
-            good.append(cp.name)
-
     unchecked: list[str] = []
     for k in as_list(get(mods.get("A"), "checks")):
         cid = str(get(k, "check_id", ""))
-        if cid.startswith("A") and str(get(k, "state")) == "NOT_COMPUTABLE":
-            cp = CHECK_PLAIN.get(cid)
-            if cp:
-                unchecked.append(f"{cp.name} (the data isn't reported in a form we can read)")
+        cp = CHECK_PLAIN.get(cid)
+        if not cid.startswith("A") or cp is None:
+            continue
+        state = str(get(k, "state"))
+        if state == "COMPUTED" and str(get(k, "severity")) == "NO_FLAG":
+            if _has_no_data(k):
+                unchecked.append(f"{cp.name} (nothing reported to check)")
+            else:
+                good.append(cp.name)
+        elif state in ("NOT_COMPUTABLE", "NOT_APPLICABLE"):
+            unchecked.append(f"{cp.name} ({_reason_plain(get(k, 'reason'))})")
     c_status = str(get(mods.get("C"), "status", ""))
     if c_status == "low_confidence":
         unchecked.append(

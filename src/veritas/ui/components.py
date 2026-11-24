@@ -613,7 +613,7 @@ def identity(result: Any, synthetic: bool) -> str:
         if not tip:
             return f'<span class="vx-label">{esc(k)}</span>'
         return (
-            f'<span class="vx-label vx-term" tabindex="0" title="{esc(tip)}" '
+            f'<span class="vx-label vx-term" tabindex="0" aria-label="{esc(k)}: {esc(tip)}" '
             f'data-tip="{esc(tip)}">{esc(k)}</span>'
         )
 
@@ -627,7 +627,7 @@ def identity(result: Any, synthetic: bool) -> str:
         if url:
             filings.append(
                 f'<a class="vx-filing" href="{url}" target="_blank" rel="noopener noreferrer" '
-                f'title="{esc(get(cit, "accession", ""))}">{inner}</a>'
+                f'title="{esc(GLOSSARY.get(str(form)) or get(cit, "accession", ""))}">{inner}</a>'
             )
         else:
             filings.append(f'<span class="vx-filing">{inner}</span>')
@@ -759,7 +759,10 @@ def score_panel(
         ]
     coverage = f"{num}/{den}" if den else "—"
     meta = (
-        f'<div class="vx-fact"><span class="vx-label">Coverage</span><b>{esc(coverage)}</b></div>'
+        '<div class="vx-fact"><span class="vx-label vx-term" tabindex="0" data-tip="How many '
+        "of the scored checks could actually be run for this company. Checks that could not "
+        'run are listed, never counted as a pass.">Coverage</span>'
+        f"<b>{esc(coverage)}</b></div>"
         f'<div class="vx-fact"><span class="vx-label">Modules</span><b>{esc(k)} of 3 modules '
         "assessed</b></div>"
     )
@@ -808,8 +811,8 @@ def score_panel(
         )
     return one_line(
         f'<div class="vx vx-panel vx-score"><div class="vx-ring-wrap">{score_ring(score)}'
-        '<div class="vx-ring-caption">Starts at 100. Points come off for each gap found '
-        "between the story and the numbers.</div></div>"
+        '<div class="vx-ring-caption">Starts at 100. Points come off for each flag found.'
+        "</div></div>"
         f'<div><div class="vx-label">Module D</div><div class="vx-score-title">'
         f"{esc(score_name)}</div>"
         f'<div class="vx-score-meta">{meta}</div>{note_html}</div><div>{ded}</div></div>'

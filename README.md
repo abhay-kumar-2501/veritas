@@ -62,6 +62,18 @@ Use your own name and contact address. The placeholder above is rejected on purp
 
 The header offers seed buttons for `NVDA`, `WMT`, `TSLA`, and `BA`, plus a command bar.
 
+## Deploying (Streamlit Community Cloud)
+
+1. At share.streamlit.io, choose **Create app → Deploy a public app from GitHub**, pick this repository, branch `main`, main file `app.py`.
+2. Under **Advanced settings**, set Python to 3.11. In **Secrets**, add:
+   ```toml
+   VERITAS_SEC_USER_AGENT = "VERITAS/0.1 <your name> <your email>"
+   ```
+   Root-level secrets are exposed as environment variables. Without this secret the site still runs, but only for the four bundled seed tickers.
+3. Dependencies come from `requirements.txt`. The bundled `seed_cache/` ships with the repository, so the seed tickers need no network access.
+
+The runtime cache (`./cache`) is ephemeral on hosted instances, which is fine: it only speeds up repeat lookups.
+
 ## Command-line interface
 
 ```bash
