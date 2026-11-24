@@ -1,0 +1,84 @@
+{
+ "0000999999-25-000079": {
+  "directory": {
+   "item": [
+    {
+     "name": "x8k-q3.htm",
+     "type": "text.gif",
+     "size": "1"
+    },
+    {
+     "name": "ex992.htm",
+     "type": "text.gif",
+     "size": "1"
+    },
+    {
+     "name": "ex991-q3.htm",
+     "type": "text.gif",
+     "size": "1"
+    }
+   ]
+  },
+  "_veritas_documents": [
+   {
+    "seq": 1,
+    "type": "8-K",
+    "name": "x8k-q3.htm",
+    "description": ""
+   },
+   {
+    "seq": 2,
+    "type": "EX-99.2",
+    "name": "ex992.htm",
+    "description": ""
+   },
+   {
+    "seq": 3,
+    "type": "EX-99.1",
+    "name": "ex991-q3.htm",
+    "description": ""
+   }
+  ]
+ },
+ "0000999999-25-000009": {
+  "directory": {
+   "item": [
+    {
+     "name": "x8k-q4.htm",
+     "type": "text.gif",
+     "size": "1"
+    },
+    {
+     "name": "ex993.htm",
+     "type": "text.gif",
+     "size": "1"
+    },
+    {
+     "name": "press.htm",
+     "type": "text.gif",
+     "size": "1"
+    }
+   ]
+  },
+  "_veritas_documents": [
+   {
+    "seq": 1,
+    "type": "8-K",
+    "name": "x8k-q4.htm",
+    "description": ""
+   },
+   {
+    "seq": 2,
+    "type": "EX-99.3",
+    "name": "ex993.htm",
+    "description": ""
+   },
+   {
+    "seq": 3,
+    "type": "EX-99",
+    "name": "press.htm",
+    "description": ""
+   }
+  ]
+ }
+}

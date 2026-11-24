@@ -22,10 +22,13 @@ WHITESPACE = re.compile(r"\s+")
 # ---------------------------------------------------------------------------
 # §7.2.2 Section location
 # ---------------------------------------------------------------------------
-MDA_10K_START = re.compile(r"^item\s*7\s*[.:\-]?\s*management'?s?\s+discussion", IM)
+# narrative: headings laid out as table rows serialize as "ITEM 7. | MANAGEMENT'S ..."
+# (§7.2.1 " | " cell join; seen in WMT 10-Ks), so an optional "|" is allowed after the
+# item number. Otherwise identical to the PRD patterns (docs/decisions/narrative.md D-302).
+MDA_10K_START = re.compile(r"^item\s*7\s*[.:\-]?\s*(?:\|\s*)?management'?s?\s+discussion", IM)
 MDA_10K_END = re.compile(r"^item\s*(7a|8)\b", IM)
-MDA_10Q_START = re.compile(r"^item\s*2\s*[.:\-]?\s*management'?s?\s+discussion", IM)
-MDA_10Q_END = re.compile(r"^(item\s*3\b|item\s*4\s*[.:\-]?\s*controls|part\s+ii\b)", IM)
+MDA_10Q_START = re.compile(r"^item\s*2\s*[.:\-]?\s*(?:\|\s*)?management'?s?\s+discussion", IM)
+MDA_10Q_END = re.compile(r"^(item\s*3\b|item\s*4\s*[.:\-]?\s*(?:\|\s*)?controls|part\s+ii\b)", IM)
 INCORPORATED_BY_REFERENCE = re.compile(r"incorporated\s+(herein\s+)?by\s+reference", I)
 EX13_MDA_START = re.compile(r"^.{0,20}management'?s\s+discussion\s+and\s+analysis", IM)
 EX13_MDA_END = re.compile(
@@ -33,7 +36,8 @@ EX13_MDA_END = re.compile(
 )
 FORWARD_LOOKING_PARA = re.compile(r"forward-looking statements", I)
 BOILERPLATE_PARA = re.compile(r"forward-looking statements|private securities litigation reform", I)
-PART_III_ITEM11_START = re.compile(r"^item\s*11\s*[.:\-]?\s*executive\s+compensation", IM)
+# footnotes/proxy: optional "| " after the item number (table-row headings).
+PART_III_ITEM11_START = re.compile(r"^item\s*11\s*[.:\-]?\s*(?:\|\s*)?executive\s+compensation", IM)
 PART_III_ITEM11_END = re.compile(r"^item\s*12\b", IM)
 
 # ---------------------------------------------------------------------------
@@ -69,6 +73,13 @@ ABBREVIATIONS = (
 DECIMAL_POINT = re.compile(r"(?<=\d)\.(?=\d)")
 SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+(?=[\"(]?[A-Z])")
 TOKEN = re.compile(r"[A-Za-z0-9']+")
+# narrative: abbreviation masking for §7.2.3 (longest first; not preceded by a letter or
+# period, so "Inc." in "Inc." matches but "inc." inside "zinc." does not). Case-sensitive.
+ABBREVIATION_RE = re.compile(
+    r"(?<![A-Za-z.])(?:"
+    + "|".join(re.escape(a) for a in sorted(ABBREVIATIONS, key=len, reverse=True))
+    + r")"
+)
 
 # ---------------------------------------------------------------------------
 # §7.2.4 / Appendix B claim clusters
@@ -111,11 +122,15 @@ HEDGE = re.compile(
 NOTES_HEADING = re.compile(
     r"notes\s+to\s+(the\s+)?(condensed\s+)?(consolidated\s+)?financial\s+statements", I
 )
-NOTE_HEADER = re.compile(r"^(note\s+)?\d{1,2}\s*[.:\-]\s*[A-Z]", re.IGNORECASE)
-ITEM8_START = re.compile(r"^item\s*8\s*[.:\-]?\s*financial\s+statements", IM)
+# footnotes/proxy: item/note headings laid out as table rows serialize as "ITEM 8. | FINANCIAL ..."
+# (optional "| " after the number), same fix as D-302.
+NOTE_HEADER = re.compile(r"^(note\s+)?\d{1,2}\s*[.:\-]?\s*(?:\|\s*)?[A-Z]", re.IGNORECASE)
+ITEM8_START = re.compile(r"^item\s*8\s*[.:\-]?\s*(?:\|\s*)?financial\s+statements", IM)
 ITEM8_END = re.compile(r"^item\s*9\b", IM)
-TEN_Q_PART1_ITEM1_START = re.compile(r"^item\s*1\s*[.:\-]?\s*financial\s+statements", IM)
-TEN_Q_PART1_ITEM1_END = re.compile(r"^item\s*2\s*[.:\-]?\s*management'?s?\s+discussion", IM)
+TEN_Q_PART1_ITEM1_START = re.compile(r"^item\s*1\s*[.:\-]?\s*(?:\|\s*)?financial\s+statements", IM)
+TEN_Q_PART1_ITEM1_END = re.compile(
+    r"^item\s*2\s*[.:\-]?\s*(?:\|\s*)?management'?s?\s+discussion", IM
+)
 
 NOTE_CATEGORIES: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("revenue", re.compile(r"revenue", I)),
@@ -211,3 +226,22 @@ BANNED_WORDS = re.compile(
 
 # 8-K exhibit fallback (§6.4)
 EX99_1_NAME = re.compile(r"ex-?99[._-]?1", I)
+
+# ---------------------------------------------------------------------------
+# footnotes/proxy: structural patterns for engine/footnote_diff.py and proxy_xray.py
+# ---------------------------------------------------------------------------
+IX_TEXTBLOCK_HINT = re.compile(r"<ix:nonnumeric", I)
+IX_TEXTBLOCK_OPEN = re.compile(r"<ix:nonnumeric\b[^>]*\bname=\"[^\"]*textblock\"", I)
+XML_DECLARATION = re.compile(r"^\s*<\?xml[^>]*\?>", I)
+NOTE_TITLE_PREFIX = re.compile(r"^\s*(note\s+)?\d{1,2}\s*[.:\-]?\s*(?:\|\s*)?", I)
+NOTE_TITLE_PREFIX_BARE = re.compile(r"^\s*note\s+\d{1,2}\s*[.:\-]?\s*", I)
+NOTE_NUMBER = re.compile(r"^\s*(?:note\s+)?(\d{1,2})", I)
+TRAILING_PAGE_NUMBER = re.compile(r"[\s.…_]*\d{1,3}\s*$")
+CAMEL_BOUNDARY = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
+ALPHA_TOKEN = re.compile(r"[a-z]+")
+NON_SPACE = re.compile(r"\S+")
+XBRL_PREFIX = re.compile(r"^[^:]*:")
+IMG_TAG = re.compile(r"<img\b", I)
+# A CD&A start counts when it sits on a heading-like line or in a self-reference such as
+# "This Compensation Discussion and Analysis ..." (text before the match on its line).
+CDA_SELF_REFERENCE_PREFIX = re.compile(r"^\s*(this|the|our)\s+$", I)
