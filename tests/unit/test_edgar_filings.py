@@ -168,7 +168,7 @@ def test_proxy_older_than_18_months_is_none() -> None:
 def test_earnings_8k_window_and_exhibit_fallbacks(sel: Any) -> None:
     s, ds = sel
     q = s.earnings_8k["0000999999-25-000080"]  # 10-Q: 8-K item 2.02 on 2025-11-04
-    assert q.doc_name == "ex991-q3.htm" and q.form == "EX-99.1"
+    assert q.doc_name == "ex991-q3.htm" and q.form == "8-K"
     assert q.accession == "0000999999-25-000079"
     k = s.earnings_8k["0000999999-25-000010"]  # no EX-99.1 type: first EX-99* by sequence
     assert k.doc_name == "ex993.htm" and k.accession == "0000999999-25-000009"

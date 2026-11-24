@@ -262,3 +262,89 @@ def test_determinism() -> None:
     a = run_footnotes(_ix_pair(), _ix_pair("10-Q"))
     b = run_footnotes(_ix_pair(), _ix_pair("10-Q"))
     assert a.to_json() == b.to_json()
+
+
+# ---- audit fixes -----------------------------------------------------------
+def test_category_uses_title_before_concept() -> None:
+    from veritas.engine.footnote_diff import _category
+
+    concept = "InvestmentsInDebtAndMarketableEquitySecuritiesDisclosureTextBlock"
+    assert _category("Cash Equivalents and Marketable Securities", concept) is None
+    assert _category("Investments", concept) is None
+    assert _category("Debt", concept) == "debt"
+    # no heading title: the concept is the only evidence
+    assert _category("Investments In Debt", concept, from_heading=False) == "debt"
+
+
+def test_federally_recognized_is_not_a_recognition_term() -> None:
+    from veritas.engine.footnote_diff import _is_material
+
+    tribes = "Some stores are located on land owned by federally recognized Native American tribes in several states."  # noqa: E501
+    assert not _is_material("INSERTED", None, tribes, None, False)
+    real = "The Company recognizes revenue when control of the promised goods transfers to the customer."  # noqa: E501
+    assert _is_material("INSERTED", None, real, None, False)
+
+
+def test_deleting_a_modal_is_not_softening() -> None:
+    _, _, soft = word_diff(
+        "The Company will comply with the financial covenant at all times during the term.",
+        "The Company complies with the financial covenant at all times during the term.",
+    )
+    assert not soft
+    _, _, real = word_diff(
+        "The Company will comply with the financial covenant at all times during the term.",
+        "The Company may comply with the financial covenant at all times during the term.",
+    )
+    assert real
+
+
+def test_wrapped_lines_join_and_st_abbreviation() -> None:
+    text = "Terms may change\nbased, in part, on use. Next sentence."
+    assert [text[s.start : s.end] for s in split_sentences(text)] == [
+        "Terms may change\nbased, in part, on use.",
+        "Next sentence.",
+    ]
+    heading = "Note 5 - Debt\nThe Company borrowed."
+    assert len(split_sentences(heading)) == 2  # a heading is not joined to the next line
+    st = "We lease a store on Main St. in Dallas. Rent is fixed."
+    assert len(split_sentences(st)) == 2
+
+
+def test_explanation_names_matched_term() -> None:
+    res = run_footnotes(_ix_pair(), None)
+    inserted = next(f for f in res.findings if "inserted" in f.title)
+    assert "'covenant'" in inserted.explanation or "'waiver'" in inserted.explanation
+
+
+def test_non_note_textblocks_excluded() -> None:
+    def blk(prefix: str, concept: str, i: int, body: str) -> str:
+        return (
+            f'<div><ix:nonNumeric name="{prefix}:{concept}TextBlock" id="b{i}">'
+            f"<p>{body}</p></ix:nonNumeric></div>"
+        )
+
+    doc = (
+        '<?xml version="1.0"?><html xmlns="http://www.w3.org/1999/xhtml" '
+        'xmlns:ix="http://www.xbrl.org/2013/inlineXBRL"><body>'
+        + blk("dei", "DocumentsIncorporatedByReference", 1, "Portions of the proxy.")
+        + blk(
+            "cyd",
+            "CybersecurityRiskBoardOfDirectorsOversight",
+            2,
+            "Our Board of Directors oversees risk.",
+        )
+        + blk("ecd", "MtrlTermsOfTrdArr", 3, "Insider trading arrangements.")
+        + blk("us-gaap", "DebtDisclosure", 4, "Debt note text.")
+        + blk("us-gaap", "LeasesDisclosure", 5, "Lease note text.")
+        + blk("us-gaap", "IncomeTaxDisclosure", 6, "Tax note text.")
+        + blk("us-gaap", "SegmentDisclosure", 7, "Segment note text.")
+        + "</body></html>"
+    )
+    segs, method = segment_filing(doc, "10-K")
+    assert method == "ixbrl"
+    assert [s.concept for s in segs] == [
+        "DebtDisclosureTextBlock",
+        "LeasesDisclosureTextBlock",
+        "IncomeTaxDisclosureTextBlock",
+        "SegmentDisclosureTextBlock",
+    ]

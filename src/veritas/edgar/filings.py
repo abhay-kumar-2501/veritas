@@ -313,7 +313,7 @@ def select_filings(
             name = find_earnings_exhibit(idx)
             if name:
                 eight_k = DocRef(
-                    cik=cik, ticker=ticker, form="EX-99.1", accession=c.accession,
+                    cik=cik, ticker=ticker, form="8-K", accession=c.accession,
                     filing_date=c.filing_date, report_date=None, doc_name=name,
                     url=document_url(cik, c.accession, name),
                 )  # fmt: skip

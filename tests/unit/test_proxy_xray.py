@@ -167,3 +167,97 @@ def test_determinism() -> None:
     a = _run(sbc_ttm=12.0, revenue_ttm=100.0, fcf_ttm=1000.0)
     b = _run(sbc_ttm=12.0, revenue_ttm=100.0, fcf_ttm=1000.0)
     assert a.to_json() == b.to_json()
+
+
+# ---- audit fixes -----------------------------------------------------------
+def _doc(*paras: str) -> tuple[DocRef, str]:
+    body = "".join(f"<p>{p}</p>" for p in paras)
+    return _ref(), (
+        "<html><body><p>Compensation Discussion and Analysis</p>"
+        + body
+        + "<p>Summary Compensation Table</p></body></html>"
+    )
+
+
+def _go(doc: tuple[DocRef, str], **kw: Any) -> Any:
+    base: dict[str, Any] = dict(
+        sbc_ttm=None, revenue_ttm=None, fcf_ttm=None, goodwill_assets=None,
+        goodwill_assets_prior=None, acquisition_guard=False,
+    )  # fmt: skip
+    base.update(kw)
+    return run_proxy(doc, None, **base)
+
+
+def test_core_eps_counts_as_nongaap_eps() -> None:
+    res = _go(
+        _doc(
+            "The annual bonus payout is tied to core earnings per share against the target.",
+            "Revenue growth also sets the bonus payout target for the year.",
+        )
+    )
+    assert {m["metric"] for m in res.extra["metrics"]} == {"NONGAAP_EPS", "REVENUE"}
+    fired = _go(
+        _doc(
+            "The annual bonus payout is tied to core EPS against the target.",
+            "Revenue growth also sets the bonus payout target for the year.",
+        ),
+        sbc_ttm=20.0,
+        revenue_ttm=100.0,
+    )
+    assert [f.id for f in fired.findings] == ["C1"]
+
+
+def test_negated_metric_not_counted() -> None:
+    res = _go(
+        _doc(
+            "The committee does not believe that relative total shareholder return should set the bonus payout target.",  # noqa: E501
+            "The annual bonus payout is tied to revenue growth against the target.",
+            "Adjusted EBITDA sets the annual bonus payout against the target.",
+        )
+    )
+    assert "TSR" not in {m["metric"] for m in res.extra["metrics"]}
+
+
+def test_peer_group_selection_not_a_metric() -> None:
+    res = _go(
+        _doc(
+            "We selected peer companies for the target pay comparison due to their revenue and market capitalization.",  # noqa: E501
+            "The annual bonus payout is tied to revenue growth against the target.",
+            "Adjusted EBITDA sets the annual bonus payout against the target.",
+        )
+    )
+    sentences = [m["sentence"] for m in res.extra["metrics"]]
+    assert not any("peer companies" in s for s in sentences)
+    assert len(sentences) == 2
+
+
+def test_metrics_deduplicated_per_metric_and_context() -> None:
+    res = _go(
+        _doc(
+            "Revenue growth sets the bonus payout.",
+            "Revenue growth also affects the bonus payout.",
+            "Adjusted EBITDA sets the bonus payout.",
+        )
+    )
+    keys = [(m["metric"], m["context"].lower()) for m in res.extra["metrics"]]
+    assert len(keys) == len(set(keys)) == 2
+    weighted = _run()
+    wk = [(m["metric"], m["context"].lower()) for m in weighted.extra["metrics"]]
+    assert len(wk) == len(set(wk))
+    assert {m["metric"] for m in weighted.extra["metrics"] if m["weight"] is not None} == {
+        "ADJ_EBITDA",
+        "REVENUE",
+        "TSR",
+    }
+
+
+def test_c1_not_applicable_wording() -> None:
+    res = _go(
+        _doc(
+            "The annual bonus payout is tied to revenue growth against the target.",
+            "Relative total shareholder return sets the PSU payout.",
+        ),
+        sbc_ttm=50.0,
+        revenue_ttm=100.0,
+    )
+    assert res.extra["checks"]["C1"]["reason"] == "Adjusted EBITDA / non-GAAP EPS not detected"

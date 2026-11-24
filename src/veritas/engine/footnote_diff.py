@@ -29,6 +29,7 @@ from veritas.lexicons import (
     ALPHA_TOKEN,
     CAMEL_BOUNDARY,
     DECIMAL_POINT,
+    EXTRA_ABBREVIATIONS,
     HEDGE,
     HIDDEN_STYLE,
     ITEM8_END,
@@ -38,6 +39,7 @@ from veritas.lexicons import (
     MATERIAL_EXCLUDE,
     MATERIAL_TERMS,
     MODALS,
+    NON_NOTE_XBRL_PREFIXES,
     NON_SPACE,
     NORM_AMOUNT,
     NORM_DATE,
@@ -66,7 +68,9 @@ PairKind = Literal["10-K", "10-Q"]
 Pair = tuple[DocRef, str, DocRef, str]
 
 _MASK = "\x01"
-_ABBR_RES = tuple(re.compile(r"(?<![A-Za-z])" + re.escape(a)) for a in ABBREVIATIONS)
+_ABBR_RES = tuple(
+    re.compile(r"(?<![A-Za-z])" + re.escape(a)) for a in (*ABBREVIATIONS, *EXTRA_ABBREVIATIONS)
+)
 
 IX_NAMESPACE = "http://www.xbrl.org/2013/inlineXBRL"
 _MAX_NOTES_HEADING_WORDS = 12
@@ -106,30 +110,60 @@ def _mask_line(line: str) -> str:
     return "".join(chars)
 
 
+def _logical_lines(text: str) -> list[tuple[int, int]]:
+    """Line spans; a line without terminal punctuation is joined with a following
+    lower-case continuation line (hard-wrapped sentences). Rows are never joined."""
+    raw: list[tuple[int, int]] = []
+    offset = 0
+    for line in text.split("\n"):
+        raw.append((offset, offset + len(line)))
+        offset += len(line) + 1
+    out: list[tuple[int, int]] = []
+    for a, b in raw:
+        if out and text[a:b].strip():
+            pa, pb = out[-1]
+            prev = text[pa:pb].rstrip()
+            nxt = text[a:b].lstrip()
+            if (
+                prev
+                and " | " not in prev
+                and " | " not in nxt
+                and not prev.endswith(_TERMINAL)
+                and nxt[0].islower()
+            ):
+                out[-1] = (pa, b)
+                continue
+        out.append((a, b))
+    return out
+
+
+_TERMINAL = (".", "!", "?", ":", ";", '"', "'", ")")
+
+
 def split_sentences(text: str) -> list[Span]:
     """Sentence spans (offsets into `text`), whitespace-trimmed. Table rows (" | ") stay whole."""
     spans: list[Span] = []
-    offset = 0
-    for line in text.split("\n"):
-        if line.strip():
-            if " | " in line:
-                pieces = [(0, len(line))]
-            else:
-                masked = _mask_line(line)
-                pieces = []
-                cursor = 0
-                for m in SENTENCE_SPLIT.finditer(masked):
-                    pieces.append((cursor, m.start()))
-                    cursor = m.end()
-                pieces.append((cursor, len(line)))
-            for a, b in pieces:
-                while a < b and line[a].isspace():
-                    a += 1
-                while b > a and line[b - 1].isspace():
-                    b -= 1
-                if b > a:
-                    spans.append(Span(offset + a, offset + b))
-        offset += len(line) + 1
+    for start, end in _logical_lines(text):
+        line = text[start:end]
+        if not line.strip():
+            continue
+        if " | " in line:
+            pieces = [(0, len(line))]
+        else:
+            masked = _mask_line(line)
+            pieces = []
+            cursor = 0
+            for m in SENTENCE_SPLIT.finditer(masked):
+                pieces.append((cursor, m.start()))
+                cursor = m.end()
+            pieces.append((cursor, len(line)))
+        for a, b in pieces:
+            while a < b and line[a].isspace():
+                a += 1
+            while b > a and line[b - 1].isspace():
+                b -= 1
+            if b > a:
+                spans.append(Span(start + a, start + b))
     return spans
 
 
@@ -256,14 +290,17 @@ def word_diff(prior: str, current: str) -> tuple[float, list[list[str]], bool]:
     sb = _modal_strength(b)
     max_del = max((sa.get(i, 0) for i in deleted), default=0)
     max_ins = max((sb.get(i, 0) for i in inserted), default=0)
-    return ratio, ops, max_del > max_ins
+    # softening = a weaker modal replaces a stronger one; a bare deletion is not softening
+    return ratio, ops, max_ins >= 1 and max_del > max_ins
 
 
 # ---------------------------------------------------------------------------
 # Segmentation
 # ---------------------------------------------------------------------------
-def _category(title: str, concept: str | None) -> str | None:
-    for source in (title, CAMEL_BOUNDARY.sub(" ", concept) if concept else ""):
+def _category(title: str, concept: str | None, from_heading: bool = True) -> str | None:
+    """Category by title first; the concept is used only when there is no heading title."""
+    sources = [title] if from_heading and title else [CAMEL_BOUNDARY.sub(" ", concept or "")]
+    for source in sources:
         if not source:
             continue
         for name, rx in NOTE_CATEGORIES:
@@ -285,7 +322,8 @@ def _concept_title(concept: str) -> str:
     return CAMEL_BOUNDARY.sub(" ", base).strip() or concept
 
 
-def _title_for(text: str, concept: str | None) -> str:
+def _title_for(text: str, concept: str | None) -> tuple[str, bool]:
+    """(title, from_heading): the title comes from the first line when it looks like one."""
     first = next((ln.strip() for ln in text.split("\n") if ln.strip()), "")
     words = len(first.split())
     if first and " | " not in first and words <= ti("NOTE_HEADER_MAX_WORDS"):
@@ -293,8 +331,10 @@ def _title_for(text: str, concept: str | None) -> str:
         if heading_like:
             cleaned = _clean_title(first)
             if cleaned:
-                return cleaned
-    return _concept_title(concept) if concept else _clean_title(first) or "Untitled note"
+                return cleaned, True
+    if concept:
+        return _concept_title(concept), False
+    return _clean_title(first) or "Untitled note", True
 
 
 def _drop(el: Any) -> None:
@@ -327,6 +367,11 @@ def _local(el: Any) -> tuple[str, bool]:
 
 def _attr(el: Any, name: str) -> str:
     return str(el.get(name) or el.get(name.lower()) or "")
+
+
+def _prefix(el: Any) -> str:
+    name = _attr(el, "name")
+    return name.split(":", 1)[0].lower() if ":" in name else ""
 
 
 def _is_textblock(el: Any) -> bool:
@@ -431,10 +476,17 @@ def _ixbrl_segments(html: str) -> list[Segment]:
                 other = owner.get(_attr(anc, "id"))
                 if other is not None and other is not own:
                     nest_later(own, other)
+    gaap_pos = [position[e] for e in elements if _is_textblock(e) and _prefix(e) == "us-gaap"]
+    lo, hi = (min(gaap_pos), max(gaap_pos)) if gaap_pos else (0, len(elements))
     segments: list[Segment] = []
     for el in root.iter():
         if not isinstance(el.tag, str) or not _is_textblock(el):
             continue
+        prefix = _prefix(el)
+        if prefix in NON_NOTE_XBRL_PREFIXES:
+            continue  # dei / ecd / cyd blocks are not financial-statement notes
+        if prefix not in ("us-gaap", "srt", "ifrs-full") and not lo <= position[el] <= hi:
+            continue  # issuer-extension block outside the notes region
         nested = el in nested_blocks or any(
             _is_textblock(anc) or _local(anc) == ("continuation", True)
             for anc in el.iterancestors()
@@ -453,8 +505,8 @@ def _ixbrl_segments(html: str) -> list[Segment]:
         if not text:
             continue
         concept = XBRL_PREFIX.sub("", _attr(el, "name"))
-        title = _title_for(text, concept)
-        segments.append(Segment(concept, title, text, _category(title, concept)))
+        title, from_heading = _title_for(text, concept)
+        segments.append(Segment(concept, title, text, _category(title, concept, from_heading)))
     return segments
 
 
@@ -663,6 +715,15 @@ class NoteDiff:
     truncated: bool
 
 
+def _term(prior: str | None, current: str | None) -> str | None:
+    for side in (current, prior):
+        if side:
+            m = MATERIAL_TERMS.search(side)
+            if m:
+                return m.group(0).lower()
+    return None
+
+
 def _is_material(
     kind: str, prior: str | None, current: str | None, ratio: float | None, softened: bool
 ) -> bool:
@@ -718,6 +779,7 @@ def diff_note(prior_text: str, current_text: str, scored_category: bool) -> Note
             "current": ctxt,
             "material": material,
             "softened": softened,
+            "term": _term(ptxt, ctxt),
             "ratio": ratio,
             "ops": ops,
             "prior_span": [ps[pi].start, ps[pi].end] if pi is not None else None,
@@ -911,10 +973,11 @@ def _process_pair(
 def _explain(row: dict[str, Any], title: str, category: str | None) -> str:
     kind = row["kind"]
     where = f"in the {title} note ({category})"
+    term = row.get("term") or "a material term"
     if kind == "INSERTED":
-        base = f"A sentence was added {where} that cites a recognition or estimate term."
+        base = f"A sentence was added {where} that cites '{term}'."
     elif kind == "DELETED":
-        base = f"A sentence was removed {where} that cited a recognition or estimate term."
+        base = f"A sentence was removed {where} that cited '{term}'."
     elif row["softened"]:
         base = f"A sentence {where} was reworded with weaker modal language (e.g. 'will' to 'may')."
     else:

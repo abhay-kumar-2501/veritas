@@ -39,3 +39,16 @@
 
 ### D-410 Known proxy limitation  (2026-11-24, M3)
 - TSLA's performance award lists "$50 billion of Adjusted EBITDA" milestones without any §7.4.3 context word in the same sentence or row, so Module C returns `low_confidence` (no flags) by the PRD rule.
+
+### D-411 Category by title, not concept  (2026-11-24, M3, audit fix)
+- Category is read from the heading title; the concept is used only when no heading title exists. "Cash Equivalents and Marketable Securities" (an `InvestmentsInDebt...` concept), BA "Investments" and "Allowances for Losses on Financial Assets" are no longer "debt". This removed false hedge hits: NVDA hedging is now NO_DRIFT (7 -> 11 hits).
+
+### D-412 Material-term, softening and sentence fixes  (2026-11-24, M3, audit fix)
+- `MATERIAL_TERMS` uses `(?<!federally )recogni[sz]` ("federally recognized tribes" is not an accounting recognition). Softening requires a weaker modal to replace a stronger one (`max_ins >= 1 and max_del > max_ins`); a bare deleted modal is not softening. Hard-wrapped lines (no terminal punctuation, next line starts lower-case, neither a table row) are joined before sentence splitting, so a quote may contain a newline but remains a verbatim slice. "St." is masked as an abbreviation. Explanations name the matched term.
+
+### D-413 Non-note TextBlocks excluded  (2026-11-24, M3, audit fix)
+- iXBRL blocks with `dei`, `ecd` or `cyd` prefixes (cover page, cybersecurity, insider-trading) are not financial-statement notes. Issuer-extension prefixes are kept only between the first and last us-gaap TextBlock in document order; `us-gaap`, `srt` and `ifrs-full` are always kept.
+
+### D-414 Proxy hit filters  (2026-11-24, M3, audit fix)
+- A hit whose every alias match has a negation (lexicon `NEGATION_TOKEN` in the 6 tokens before, or "does not believe/consider/use/rely") is ignored. Sentences about peer-group selection/appropriateness/adjustment (`PROXY_PEER_SELECTION`) are ignored. The metrics table keeps one row per (metric, context): a weighted row wins, else the earliest. LOW_CONFIDENCE and the ROIC/FCF note use all hits, not the deduplicated table.
+- `NONGAAP_EPS` also matches "core EPS" / "core earnings (loss) per share" (BA). C1 "not applicable" now reads "Adjusted EBITDA / non-GAAP EPS not detected"; other non-GAAP measures (NVDA Non-GAAP Operating Income) are outside the PRD alias list.

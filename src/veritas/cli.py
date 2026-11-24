@@ -32,10 +32,26 @@ def main(argv: list[str] | None = None) -> int:
         build_parser().print_help()
         return 0
 
-    from veritas.pipeline import analyze  # deferred: heavy imports
+    from veritas.edgar.client import EdgarError
+    from veritas.edgar.source import DataUnavailable
+    from veritas.pipeline import AnalysisError, TickerNotFound, analyze  # deferred: heavy
 
     target = " ".join(args.target)
-    result = analyze(target, offline=args.offline or settings.offline)
+    try:
+        result = analyze(target, offline=args.offline or settings.offline)
+    except TickerNotFound as exc:
+        hint = f" Did you mean: {', '.join(exc.suggestions)}?" if exc.suggestions else ""
+        print(f"Ticker not found (delisted/renamed tickers unsupported).{hint}", file=sys.stderr)
+        return 2
+    except AnalysisError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    except DataUnavailable as exc:
+        print(f"Data unavailable: {exc}", file=sys.stderr)
+        return 2
+    except EdgarError as exc:
+        print(f"SEC EDGAR request failed: {exc}", file=sys.stderr)
+        return 3
     if args.json:
         print(result.to_json())
     else:

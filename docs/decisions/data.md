@@ -71,3 +71,8 @@ Verified live on 2026-11-24 against www.sec.gov / data.sec.gov (PRD Appendix D).
 - Earnings press releases are looked up only for the latest 10-K and the latest 10-Q (the documents the narrative module pairs against), newest in-window 2.02 8-K first, at most 3 candidates; every missing item adds an explicit entry to `FilingSelection.notes` and nothing is guessed.
 - A latest/prior 10-K whose primary document is not `.htm/.html` becomes `None` plus a "document unavailable" note; it does not fall through to an older filing (the "prior 10-K" is always the next-older 10-K by form).
 - `CIK n` input that is absent from the ticker file resolves through `submissions.tickers[0]`; if there is no ticker it raises `TickerNotFound` rather than inventing a label.
+
+### D-110 Earnings exhibit DocRef form is "8-K"  (2026-11-24, audit fix)
+- **Question:** The EX-99.1 DocRef carried form "EX-99.1", but the narrative locator and pairing key on forms starting with "8-K", so no earnings release was ever scanned (independent audit finding).
+- **Choice:** The DocRef form is "8-K" (the filing's form). The exhibit name stays in `doc_name` and `url`.
+- **Revisit if:** other exhibit types need their own handling.

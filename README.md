@@ -15,14 +15,14 @@ The full method, thresholds, and limitations are in [docs/METHODOLOGY.md](docs/M
 ## Requirements
 
 - **Python 3.11** (`requires-python = ">=3.11,<3.13"`), managed with **uv**.
-- **uv** is installed at `~/.local/bin/uv` on this machine. If Python 3.11 is not yet available, run `~/.local/bin/uv python install 3.11`.
+- **uv** ([install guide](https://docs.astral.sh/uv/)). If Python 3.11 is not yet available, run `uv python install 3.11`. (If `uv` is not on your `PATH`, call it by its full path, e.g. `~/.local/bin/uv`.)
 
 ## Setup
 
 From the repository root:
 
 ```bash
-~/.local/bin/uv sync --extra dev
+uv sync --extra dev
 ```
 
 This creates `.venv/` with the pinned runtime and development dependencies from `uv.lock`.
@@ -131,12 +131,12 @@ veritas/
 │   ├── lexicons.py           # all regexes from Appendix B
 │   ├── models.py             # §5.2
 │   ├── pipeline.py           # analyze()
-│   ├── edgar/  client.py ratelimit.py cache.py resolve.py filings.py seed.py
+│   ├── edgar/  client.py ratelimit.py cache.py source.py resolve.py filings.py
 │   ├── engine/ xbrl_normalize.py tags.py gating.py accounting_checks.py
 │   │           html_text.py sections.py narrative.py footnote_diff.py
 │   │           proxy_xray.py scorer.py
 │   ├── export/ pdf_tearsheet.py
-│   └── ui/     layout.py views.py commands.py styles.css
+│   └── ui/     layout.py views.py commands.py components.py charts.py styles.css
 └── tests/ unit/ golden/ fixtures/ conftest.py
 ```
 

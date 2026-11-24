@@ -22,11 +22,16 @@ from veritas.lexicons import (
     CDA_START,
     IMG_TAG,
     INCENTIVE_CONTEXT,
+    NEGATION_SUFFIX,
+    NEGATION_TOKEN,
     PART_III_ITEM11_END,
     PART_III_ITEM11_START,
     PROXY_ALIASES,
     PROXY_EXCLUDE_HEADING,
     PROXY_EXCLUDE_SENTENCE,
+    PROXY_NEGATION_PHRASE,
+    PROXY_PEER_SELECTION,
+    TOKEN,
     WEIGHT_HEADER,
     WEIGHT_PERCENT,
 )
@@ -144,6 +149,26 @@ def _parse_weight(row: str, header_rows: list[str]) -> float | None:
     return float(next(iter(found))) if len(found) == 1 else None
 
 
+def _negated(unit: str, start: int) -> bool:
+    """Negation within the 6 tokens before the alias, or an explicit "does not believe"."""
+    before = unit[:start]
+    if PROXY_NEGATION_PHRASE.search(before[-80:]):
+        return True
+    tokens = TOKEN.findall(before)[-ti("NEGATION_WINDOW_TOKENS") :]
+    return any(NEGATION_TOKEN.match(w) or w.lower().endswith(NEGATION_SUFFIX) for w in tokens)
+
+
+def _dedupe(hits: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """One row per (metric, context): a weighted row first, then the earliest."""
+    best: dict[tuple[str, str], dict[str, Any]] = {}
+    for h in hits:
+        key = (h["metric"], str(h["context"]).lower())
+        cur = best.get(key)
+        if cur is None or (cur["weight"] is None and h["weight"] is not None):
+            best[key] = h
+    return sorted(best.values(), key=lambda h: (h["start"], h["metric"]))
+
+
 def detect_metrics(cda_text: str) -> list[dict[str, Any]]:
     """Metric hits in the CD&A text; each carries its sentence/row span in `cda_text`."""
     lines = cda_text.split("\n")
@@ -171,8 +196,10 @@ def detect_metrics(cda_text: str) -> list[dict[str, Any]]:
             unit = cda_text[a:b]
             if PROXY_EXCLUDE_SENTENCE.search(unit):
                 continue
+            if PROXY_PEER_SELECTION.search(unit):
+                continue  # peer-group selection criteria are not incentive metrics (D-413)
             for name, rx in PROXY_ALIASES.items():
-                if not rx.search(unit):
+                if not any(not _negated(unit, m.start()) for m in rx.finditer(unit)):
                     continue
                 ctx = INCENTIVE_CONTEXT.search(unit)
                 if ctx is None and row:
@@ -194,7 +221,7 @@ def detect_metrics(cda_text: str) -> list[dict[str, Any]]:
                     }
                 )
     hits.sort(key=lambda h: (h["start"], h["metric"]))
-    return hits
+    return hits  # callers de-duplicate with _dedupe for display
 
 
 def _result(
@@ -256,7 +283,8 @@ def run_proxy(
         )
         return _result("unavailable", (), reason, _empty_extra(None))
     ref, cda_text, label, how, raw_html = picked
-    hits = detect_metrics(cda_text)
+    all_hits = detect_metrics(cda_text)
+    hits = _dedupe(all_hits)
     metrics: list[dict[str, Any]] = []
     for h in hits:
         cite = ref.cite(label, PARSER_VERSION, h["sentence"], h["start"], h["end"])
@@ -269,7 +297,7 @@ def run_proxy(
                 "citation": cite.to_dict(),
             }
         )
-    distinct = sorted({h["metric"] for h in hits})
+    distinct = sorted({h["metric"] for h in all_hits})
     extra: dict[str, Any] = {
         "source": label,
         "metrics": metrics,
@@ -300,7 +328,7 @@ def run_proxy(
     # C1: SBC vs non-GAAP pay metric
     c1: dict[str, Any] = {"state": "NO_FLAG", "reason": None, "reasons": []}
     if not any(m in first for m in NON_GAAP):
-        c1 = {"state": "NOT_APPLICABLE", "reason": "No non-GAAP incentive metric detected"}
+        c1 = {"state": "NOT_APPLICABLE", "reason": "Adjusted EBITDA / non-GAAP EPS not detected"}
     elif sbc_ttm is None or (revenue_ttm is None and fcf_ttm is None):
         c1 = {"state": "NOT_COMPUTABLE", "reason": "SBC, revenue or free cash flow unavailable"}
     else:
