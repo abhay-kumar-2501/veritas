@@ -1,0 +1,273 @@
+{
+  "BA": {
+    "checks": {
+      "A1_DSO": [
+        "COMPUTED",
+        "NO_FLAG"
+      ],
+      "A2_DIO": [
+        "NOT_APPLICABLE",
+        null
+      ],
+      "A3_ACCRUALS": [
+        "COMPUTED",
+        "WARNING"
+      ],
+      "A4_CAPRATE": [
+        "NOT_COMPUTABLE",
+        null
+      ],
+      "A5_RESTRUCT": [
+        "COMPUTED",
+        "NO_FLAG"
+      ]
+    },
+    "deductions": {
+      "accounting": 5,
+      "footnotes": 20,
+      "hedging": 0,
+      "incentives": 5
+    },
+    "findings_scored": [
+      [
+        "A:A3_ACCRUALS:2026-09-30:unaddressed",
+        "WARNING"
+      ],
+      [
+        "B-10-K-001",
+        "WARNING"
+      ],
+      [
+        "B-10-K-002",
+        "WARNING"
+      ],
+      [
+        "B-10-K-003",
+        "WARNING"
+      ],
+      [
+        "B-10-K-004",
+        "WARNING"
+      ],
+      [
+        "B-10-K-005",
+        "WARNING"
+      ],
+      [
+        "B-10-K-006",
+        "WARNING"
+      ],
+      [
+        "B-10-K-007",
+        "WARNING"
+      ],
+      [
+        "B-10-K-008",
+        "WARNING"
+      ],
+      [
+        "B-10-K-009",
+        "WARNING"
+      ],
+      [
+        "B-10-K-010",
+        "WARNING"
+      ],
+      [
+        "B-10-K-011",
+        "WARNING"
+      ],
+      [
+        "B-10-K-012",
+        "WARNING"
+      ],
+      [
+        "B-10-K-013",
+        "WARNING"
+      ],
+      [
+        "C1",
+        "WARNING"
+      ]
+    ],
+    "label": "Score 70 \u00b7 coverage 3/4",
+    "modules": {
+      "A": "ok",
+      "B": "ok",
+      "C": "ok"
+    },
+    "score": 70
+  },
+  "NVDA": {
+    "checks": {
+      "A1_DSO": [
+        "COMPUTED",
+        "WARNING"
+      ],
+      "A2_DIO": [
+        "COMPUTED",
+        "WARNING"
+      ],
+      "A3_ACCRUALS": [
+        "COMPUTED",
+        "CRITICAL"
+      ],
+      "A4_CAPRATE": [
+        "NOT_COMPUTABLE",
+        null
+      ],
+      "A5_RESTRUCT": [
+        "COMPUTED",
+        "NO_FLAG"
+      ]
+    },
+    "deductions": {
+      "accounting": 16,
+      "footnotes": 10,
+      "hedging": 0,
+      "incentives": 0
+    },
+    "findings_scored": [
+      [
+        "A:A1_DSO:2026-07-26:unaddressed",
+        "WARNING"
+      ],
+      [
+        "A:A2_DIO:2026-07-26:unaddressed",
+        "WARNING"
+      ],
+      [
+        "A:A3_ACCRUALS:2026-07-26:unaddressed",
+        "CRITICAL"
+      ],
+      [
+        "B-10-K-001",
+        "WARNING"
+      ],
+      [
+        "B-10-K-002",
+        "WARNING"
+      ]
+    ],
+    "label": "Score 74 \u00b7 coverage 4/5",
+    "modules": {
+      "A": "ok",
+      "B": "ok",
+      "C": "ok"
+    },
+    "score": 74
+  },
+  "TSLA": {
+    "checks": {
+      "A1_DSO": [
+        "COMPUTED",
+        "NO_FLAG"
+      ],
+      "A2_DIO": [
+        "COMPUTED",
+        "WARNING"
+      ],
+      "A3_ACCRUALS": [
+        "COMPUTED",
+        "NO_FLAG"
+      ],
+      "A4_CAPRATE": [
+        "NOT_COMPUTABLE",
+        null
+      ],
+      "A5_RESTRUCT": [
+        "COMPUTED",
+        "NO_FLAG"
+      ]
+    },
+    "deductions": {
+      "accounting": 5,
+      "footnotes": 20,
+      "hedging": 0
+    },
+    "findings_scored": [
+      [
+        "A:A2_DIO:2026-09-30:unaddressed",
+        "WARNING"
+      ],
+      [
+        "B-10-K-001",
+        "WARNING"
+      ],
+      [
+        "B-10-K-002",
+        "WARNING"
+      ],
+      [
+        "B-10-K-003",
+        "WARNING"
+      ],
+      [
+        "B-10-K-004",
+        "WARNING"
+      ],
+      [
+        "B-10-K-005",
+        "WARNING"
+      ],
+      [
+        "B-10-K-006",
+        "WARNING"
+      ],
+      [
+        "B-10-K-007",
+        "WARNING"
+      ]
+    ],
+    "label": "Score 75 \u00b7 coverage 4/5",
+    "modules": {
+      "A": "ok",
+      "B": "ok",
+      "C": "low_confidence"
+    },
+    "score": 75
+  },
+  "WMT": {
+    "checks": {
+      "A1_DSO": [
+        "NOT_APPLICABLE",
+        null
+      ],
+      "A2_DIO": [
+        "COMPUTED",
+        "NO_FLAG"
+      ],
+      "A3_ACCRUALS": [
+        "COMPUTED",
+        "NO_FLAG"
+      ],
+      "A4_CAPRATE": [
+        "NOT_COMPUTABLE",
+        null
+      ],
+      "A5_RESTRUCT": [
+        "COMPUTED",
+        "NO_FLAG"
+      ]
+    },
+    "deductions": {
+      "accounting": 0,
+      "footnotes": 5,
+      "hedging": 0,
+      "incentives": 0
+    },
+    "findings_scored": [
+      [
+        "B-10-K-001",
+        "WARNING"
+      ]
+    ],
+    "label": "Score 95 \u00b7 coverage 3/4",
+    "modules": {
+      "A": "ok",
+      "B": "ok",
+      "C": "ok"
+    },
+    "score": 95
+  }
+}
