@@ -227,3 +227,32 @@ def test_display_quote_truncation() -> None:
     assert shown.endswith("…")
     assert shown[:-1].split() == [f"w{i}" for i in range(60)]
     assert long.startswith(shown[:-1])
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        # TSLA 10-Q/10-K wording: aspiration, not an achieved result.
+        "We continue to ramp production and build and optimize our manufacturing capacity, "
+        "expand our operations while focusing on further cost reductions and operational "
+        "efficiencies to enable increased deliveries and deployments.",
+        # WMT 10-K/10-Q strategy sentence.
+        "This includes increasing comparable store and club sales through increasing "
+        "membership, accelerating eCommerce sales growth and expansion of omnichannel "
+        "initiatives that complement our strategy.",
+        "Our goal is to deliver record bookings across every region in our industrial business.",
+        "We reorganized the sales force in order to sustain robust demand from key accounts.",
+    ],
+)
+def test_intent_sentences_rejected(sentence: str) -> None:
+    sec = Section(status="OK", text=sentence, word_count=len(sentence.split()), label="10-K")
+    assert extract_claims(sec, _doc()) == ()
+
+
+def test_strategic_adjective_is_not_intent() -> None:
+    sentence = (
+        "The increase for fiscal 2026 was primarily due to operational efficiencies and higher "
+        "margins in fuel, partially offset by charges related to strategic supply chain decisions."
+    )
+    sec = Section(status="OK", text=sentence, word_count=len(sentence.split()), label="10-K")
+    assert [c.cluster for c in extract_claims(sec, _doc())] == ["MARGIN"]

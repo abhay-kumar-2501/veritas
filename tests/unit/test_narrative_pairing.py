@@ -19,6 +19,8 @@ def _check(
     annotations: tuple[str, ...] = (),
     scored: bool = True,
     state: str = "COMPUTED",
+    inputs: dict[str, float | None] | None = None,
+    reason: str | None = None,
 ) -> CheckResult:
     return CheckResult(
         check_id=check_id,
@@ -26,10 +28,10 @@ def _check(
         state=state,  # type: ignore[arg-type]
         severity=severity if state == "COMPUTED" else None,
         period_end=period,
-        inputs={},
+        inputs={"x": 1.0} if inputs is None else inputs,
         outputs={},
         formula="f",
-        reason=None,
+        reason=reason,
         annotations=annotations,
         citations=(),
         scored=scored,
@@ -214,3 +216,41 @@ def test_determinism_and_order_independence() -> None:
         "A:A5_RESTRUCT:2025-10-26:consistent",
     ]
     assert len({f.id for f in one}) == len(one)
+
+
+def test_no_data_no_flag_check_gives_no_consistent_finding() -> None:
+    marker = _check(
+        "A5_RESTRUCT",
+        severity="NO_FLAG",
+        inputs={},
+        reason="no restructuring tags reported",
+        annotations=("no restructuring tags reported",),
+    )
+    claims = [_claim("ONETIME", start=1), _claim("ONETIME", start=50)]
+    assert pair_findings(_lookup(marker), claims, [marker]) == ()
+    all_none = _check("A1_DSO", severity="NO_FLAG", inputs={"AR_end": None, "Revenue_q": None})
+    assert pair_findings(_lookup(all_none), [_claim("DEMAND")], [all_none]) == ()
+    a5_no_restruct = CheckResult(
+        **{
+            **_check("A5_RESTRUCT", severity="NO_FLAG").__dict__,
+            "inputs": {"Restructuring_q": None, "Revenue_q": 9.0},
+            "outputs": {"quarters_with_data_last8": 0.0},
+        }
+    )
+    assert pair_findings(_lookup(a5_no_restruct), [_claim("ONETIME")], [a5_no_restruct]) == ()
+    with_data = CheckResult(
+        **{
+            **a5_no_restruct.__dict__,
+            "inputs": {"Restructuring_q": 5.0, "Revenue_q": 9.0},
+            "outputs": {"quarters_with_data_last8": 4.0},
+        }
+    )
+    (f,) = pair_findings(_lookup(with_data), [_claim("ONETIME")], [with_data])
+    assert f.category == "claims_consistent"
+
+
+def test_exhibit_form_counts_as_8k_for_quote_preference() -> None:
+    chk = _check()
+    ex = _claim(form="EX-99.1", start=1, accession="0000000001-25-000009")
+    (f,) = pair_findings(_lookup(chk), [ex, _claim(start=300)], [chk])
+    assert [c.citation.form for c in f.claims] == ["10-Q", "EX-99.1"]

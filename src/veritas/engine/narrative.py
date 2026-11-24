@@ -20,6 +20,7 @@ from veritas.lexicons import (
     CLUSTERS,
     DECIMAL_POINT,
     FORWARD,
+    INTENT,
     NEGATION_SUFFIX,
     NEGATION_TOKEN,
     SENTENCE_SPLIT,
@@ -133,8 +134,8 @@ def extract_claims(section: Section, doc: DocRef) -> tuple[Claim, ...]:
             n = len(sentence.split())
             if n < min_words or n > max_words:
                 continue
-            if FORWARD.search(sentence):
-                continue
+            if FORWARD.search(sentence) or INTENT.search(sentence):
+                continue  # tagged FORWARD / INTENT, never a claim (D-311)
             for cluster in ("DEMAND", "MARGIN", "ONETIME"):
                 if not _cluster_hit(sentence, cluster):
                     continue
@@ -168,7 +169,30 @@ def _is_flag(check: CheckResult) -> bool:
 
 
 def _is_8k(citation: Citation) -> bool:
-    return citation.form.upper().startswith("8-K")
+    """Earnings-release citation: form "8-K" or an exhibit type "EX-99*", or the 8-K label."""
+    form = citation.form.upper()
+    return form.startswith("8-K") or form.startswith("EX-99") or citation.section == LABEL_8K
+
+
+NO_DATA_MARKERS = ("no restructuring tags reported",)
+
+
+def _has_no_data(check: CheckResult) -> bool:
+    """True when a NO_FLAG result reflects absent data rather than measured numbers:
+    a known no-data note in reason/annotations, or every input is None (D-313)."""
+    notes = " ".join((check.reason or "", *check.annotations)).lower()
+    if any(marker in notes for marker in NO_DATA_MARKERS):
+        return True
+    if all(v is None for v in check.inputs.values()):
+        return True
+    # A5: restructuring inputs absent and no quarter in the window had restructuring data
+    # (NVDA/WMT seeds report Revenue_q but never a restructuring value).
+    restruct = [v for k, v in check.inputs.items() if k.startswith("Restructuring")]
+    return (
+        bool(restruct)
+        and all(v is None for v in restruct)
+        and check.outputs.get("quarters_with_data_last8") == 0
+    )
 
 
 def _select_quotes(claims: Sequence[Claim]) -> tuple[Claim, ...]:
@@ -324,7 +348,8 @@ def pair_findings(
                 continue
             selected = _select_quotes(by_period[period])
             if check.severity == "NO_FLAG":
-                findings.append(_consistent(check, period, selected))
+                if not _has_no_data(check):
+                    findings.append(_consistent(check, period, selected))
             elif _is_flag(check) and check is not latest:
                 findings.append(_contradiction(check, period, selected, CATEGORY_PRIOR, "prior"))
 

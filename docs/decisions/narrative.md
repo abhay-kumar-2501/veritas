@@ -38,7 +38,7 @@
 
 ### D-305 Earnings-release cut point  (2026-11-24, M2)
 - **Choice:** "first data table" means the first multi-cell row (contains ` | `) that `is_data_row`. The cut goes before any contiguous multi-cell header rows directly above it, such as `(in millions) | Q4 FY25 | Q4 FY24`. The forward-looking cut is the first line that contains `forward-looking statements`. Single-cell numeric lines do not end the release.
-- **Revisit if:** releases with a highlights table at the very top become common. The BA seed releases are cut after about 100 words for this reason.
+- **Revisit if:** releases with a highlights table at the very top become common. The BA seed releases are cut after about 100 words for this reason. Extended by D-312.
 
 ### D-306 Pairing outputs and scoring safety  (2026-11-24, M2)
 - **Question:** claims come from several filings with different periods (10-K at fiscal year end, 10-Q at the latest quarter). §7.5 scores A1-A5 findings, and two findings for one check would double the deduction.
@@ -68,16 +68,54 @@
 - **Choice:** `ABBREVIATION_RE` in `lexicons.py` (marked `# narrative`) is built from `ABBREVIATIONS`, longest first. It is case-sensitive and must not be preceded by a letter or a period. Matched periods and `\d\.\d` periods are replaced with a same-length placeholder (`\x00`) in a copy of the line, so split offsets apply unchanged to the original.
 - **Consequence:** a sentence that ends with an abbreviation (e.g. "... in the U.S. Revenue grew") is not split there. This is accepted per §7.2.3.
 
+### D-311 INTENT rejection: goals and strategy are not claims  (2026-11-24, M2, audit fix)
+- **Question:** Appendix B rejects only negated and FORWARD sentences. An audit found that TSLA's A2 check escalated to CRITICAL on boilerplate, "...while focusing on further cost reductions and operational efficiencies ... to enable increased deliveries". It found the same for WMT's "accelerating eCommerce sales growth ... that complement our strategy". Neither sentence asserts an achieved result.
+- **Options considered:**
+  - keep Appendix B only (false contradictions);
+  - the lead's pattern including `strateg\w*`;
+  - the same pattern limited to the nouns *strategy* and *strategies*.
+- **Choice:** `INTENT` in `lexicons.py` (marked `# narrative`): `\b(focus\w*\s+on|aim\w*\s+to|seek\w*\s+to|strateg(y|ies)|in\s+order\s+to|to\s+enable|priorit\w*|goal\s+(is|of))\b`. It is applied like FORWARD: the whole sentence is tagged INTENT and never becomes a claim. This is a deliberate addition beyond Appendix B under §0.3.
+- **Rationale / evidence:** with `strateg\w*`, the adjective also removed WMT's achieved-result sentence "The increase for fiscal 2026 was primarily due to operational efficiencies ... reorganization charges related to strategic supply chain decisions". The noun-only form keeps that sentence and still rejects the strategy sentence. Known false negatives, accepted because false positives escalate scores:
+  - BA "...similar solid demand as governments prioritize security";
+  - WMT "disciplined cost controls ... strategic growth priorities".
+- **Revisit if:** reviewers find achieved-result claims lost to `priorit\w*` or `focus on`.
+
+### D-312 Earnings-release cut for slide decks  (2026-11-24, M2, audit fix)
+- **Question:** the TSLA "Update" EX-99.1 is a slide deck with letter-spaced headings and no `|` tables. `locate_earnings_release` ran to about 7,400 words.
+- **Choice:** the release also ends at the first of:
+  - a line starting with a financial or operational summary heading. `EARNINGS_SUMMARY_HEADING` allows `\s*` between letters, so "F I N A N C I A L S U M M A R Y" matches. A contents line that mentions "Financial Summary" mid-line does not match.
+  - a run of `EARNINGS_DATA_RUN_MIN = 3` consecutive numeric lines (single-cell or multi-cell). The cut goes at the start of the run.
+- **Note:** `EARNINGS_DATA_RUN_MIN` is a module constant in `sections.py` because `config.py` is owned by another agent. It should move to `THRESHOLDS`.
+- **Evidence:** the TSLA releases are now 496 and 497 words (highlights only). The NVDA, WMT and BA releases are unchanged except for a few words.
+
+### D-313 No "claims consistent" without numbers  (2026-11-24, M2, audit fix)
+- **Question:** BA A5 is NO_FLAG with "no restructuring tags reported". Its two ONETIME quotes appeared as "consistent with numbers" when there are no numbers.
+- **Choice:** `pair_findings` emits no `claims_consistent` finding when the NO_FLAG check has no data. That is the case when any of these holds:
+  - the reason or an annotation contains "no restructuring tags reported";
+  - every input is None, or the inputs are empty;
+  - its `Restructuring*` inputs are all None and `outputs["quarters_with_data_last8"] == 0`. This is the NVDA and WMT A5 case, where `Revenue_q` is present but restructuring data never is.
+- The claims are dropped silently. Flag findings are unaffected.
+- **Revisit if:** the accounting-check module adds an explicit no-data flag. Use that instead of the output-key heuristic.
+
+### D-314 Earnings citations recognized by form or exhibit type  (2026-11-24, M2, audit fix)
+- **Choice:** `_is_8k` treats a citation as an earnings release when its form starts with `8-K` or `EX-99`, or its section is `8-K EX-99.1`. `extract_claims` never depended on form. A seed test runs extraction with DocRef form `8-K` and with `EX-99.1`.
+
 ### D-310 Seed results (parser 1.0.0, seed built 2026-11-24)
 | Ticker | Filing | MD&A words | Claims |
 |---|---|---|---|
 | NVDA | 10-K FY2026 / FY2025 | 5,365 / 5,989 | 2 / 2 |
 | NVDA | 10-Q Q2 FY27 / Q2 FY26 | 6,204 / 5,438 | 0 / 0 |
-| WMT | 10-K FY2026 / FY2025 | 9,348 / 9,499 | 5 / 3 |
-| WMT | 10-Q Q2 FY27 / Q2 FY26 | 7,728 / 7,485 | 3 / 2 |
-| TSLA | 10-K 2025 / 2024 | 8,563 / 7,616 | 1 / 0 |
-| TSLA | 10-Q Q3 2026 / Q3 2025 | 6,340 / 6,196 | 1 / 1 |
-| BA | 10-K 2025 / 2024 | 13,589 / 13,657 | 5 / 4 |
+| NVDA | 8-K EX-99.1 x2 | 305 / 267 | 0 / 0 |
+| WMT | 10-K FY2026 / FY2025 | 9,348 / 9,499 | 4 / 2 |
+| WMT | 10-Q Q2 FY27 / Q2 FY26 | 7,728 / 7,485 | 2 / 1 |
+| WMT | 8-K EX-99.1 x2 | 624 / 682 | 1 / 1 |
+| TSLA | 10-K 2025 / 2024 | 8,563 / 7,616 | 0 / 0 |
+| TSLA | 10-Q Q3 2026 / Q3 2025 | 6,340 / 6,196 | 0 / 0 |
+| TSLA | 8-K EX-99.1 x2 | 496 / 497 | 0 / 0 |
+| BA | 10-K 2025 / 2024 | 13,589 / 13,657 | 4 / 3 |
 | BA | 10-Q Q3 2026 / Q3 2025 | 7,745 / 8,841 | 0 / 0 |
+| BA | 8-K EX-99.1 x2 | 98 / 72 | 0 / 0 |
+
+(Updated after D-311 to D-314.)
 
 The only NVDA 10-Q match ("We believe these AI cloud partners have strong customer demand ...") is rejected as forward-looking, as the PRD requires.

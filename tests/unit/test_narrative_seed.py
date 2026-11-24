@@ -111,3 +111,35 @@ def test_seed_citation_invariant(case: tuple[str, str, str, Path]) -> None:
         assert cit.char_start is not None and cit.char_end is not None
         assert sec.text[cit.char_start : cit.char_end] == cit.quote_raw
         assert cit.section == sec.label
+
+
+@pytest.mark.parametrize("form", ["8-K", "EX-99.1"])
+def test_seed_earnings_releases_located_and_cited(form: str) -> None:
+    cases = _cases("8-K")
+    if not cases:
+        pytest.skip("no seed earnings releases")
+    ok = 0
+    for ticker, _, _, path in cases:
+        sec = _section("8-K", path)
+        if sec.status != "OK":
+            continue
+        ok += 1
+        assert sec.label == "8-K EX-99.1"
+        # Slide-deck releases are cut at the summary heading (D-312).
+        assert sec.word_count < 2000, f"{ticker} release not cut ({sec.word_count} words)"
+        doc = DocRef(
+            cik=0,
+            ticker=ticker,
+            form=form,  # the data layer may label the exhibit either way
+            accession="0000000000-00-000000",
+            filing_date=date(2026, 1, 1),
+            report_date=date(2025, 12, 31),
+            doc_name=path.name.removesuffix(".gz"),
+            url="https://www.sec.gov/Archives/edgar/data/0/0/" + path.name.removesuffix(".gz"),
+        )
+        for claim in extract_claims(sec, doc):
+            cit = claim.citation
+            assert cit.char_start is not None and cit.char_end is not None
+            assert sec.text[cit.char_start : cit.char_end] == cit.quote_raw
+            assert cit.section == "8-K EX-99.1"
+    assert ok >= 1

@@ -15,6 +15,7 @@ from typing import Literal
 from veritas.config import ti
 from veritas.engine.html_text import CELL_SEPARATOR, is_data_row
 from veritas.lexicons import (
+    EARNINGS_SUMMARY_HEADING,
     EX13_MDA_END,
     EX13_MDA_START,
     FORWARD_LOOKING_PARA,
@@ -31,6 +32,7 @@ LABEL_10K = "10-K Item 7"
 LABEL_10Q = "10-Q Item 2"
 LABEL_EX13 = "EX-13 MD&A"
 LABEL_8K = "8-K EX-99.1"
+# Consecutive numeric lines (single- or multi-cell) that end an earnings release (D-312).
 
 
 @dataclass(frozen=True)
@@ -139,23 +141,36 @@ def locate_mda(text: str, form: str, ex13_text: str | None = None) -> Section:
 
 
 def locate_earnings_release(text: str) -> Section:
-    """8-K EX-99.1 narrative: from the start of the exhibit text up to the first data
-    table or the first paragraph mentioning forward-looking statements. The cut for a
-    data table is placed before the table's header rows (the contiguous multi-cell rows
-    directly above its first data row)."""
+    """8-K EX-99.1 narrative: from the start of the exhibit text up to the first of
+    - the first data table (cut before its contiguous multi-cell header rows),
+    - a run of config EARNINGS_DATA_RUN_MIN consecutive numeric lines,
+    - a financial/operational summary heading (slide-deck releases, D-312),
+    - the first paragraph mentioning forward-looking statements."""
     cut = len(text)
     pos = 0
     row_run_start: int | None = None  # offset of the current run of multi-cell rows
+    data_run_start: int | None = None  # offset of the current run of numeric lines
+    data_run_len = 0
     for line in text.split("\n"):
         is_row = CELL_SEPARATOR in line
         if is_row and row_run_start is None:
             row_run_start = pos
         elif not is_row:
             row_run_start = None
-        if is_row and is_data_row(line):
+        numeric = bool(line.strip()) and is_data_row(line)
+        if numeric:
+            if data_run_start is None:
+                data_run_start = pos
+            data_run_len += 1
+        else:
+            data_run_start, data_run_len = None, 0
+        if is_row and numeric:
             cut = row_run_start if row_run_start is not None else pos
             break
-        if FORWARD_LOOKING_PARA.search(line):
+        if data_run_start is not None and data_run_len >= ti("EARNINGS_DATA_RUN_MIN"):
+            cut = data_run_start
+            break
+        if FORWARD_LOOKING_PARA.search(line) or EARNINGS_SUMMARY_HEADING.search(line):
             cut = pos
             break
         pos += len(line) + 1

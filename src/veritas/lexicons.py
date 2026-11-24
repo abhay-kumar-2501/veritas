@@ -80,6 +80,24 @@ ABBREVIATION_RE = re.compile(
     + "|".join(re.escape(a) for a in sorted(ABBREVIATIONS, key=len, reverse=True))
     + r")"
 )
+# narrative: intent/aspiration markers (D-311, beyond Appendix B per §0.3). A sentence
+# describing goals or strategy is tagged INTENT and never becomes a claim. Only the noun
+# strategy/strategies: the adjective "strategic" also describes achieved results (WMT).
+INTENT = re.compile(
+    r"\b(focus\w*\s+on|aim\w*\s+to|seek\w*\s+to|strateg(y|ies)|in\s+order\s+to|to\s+enable|"
+    r"priorit\w*|goal\s+(is|of))\b",
+    I,
+)
+# narrative: earnings-deck summary headings that end the EX-99.1 narrative (D-312). Letters
+# may be spaced out ("F I N A N C I A L S U M M A R Y", as in the TSLA update decks).
+EARNINGS_SUMMARY_HEADING = re.compile(
+    r"^("
+    + "|".join(
+        r"\s*".join(w.replace(" ", "")) for w in ("financial summary", "operational summary")
+    )
+    + r")\b",
+    I,
+)
 
 # ---------------------------------------------------------------------------
 # §7.2.4 / Appendix B claim clusters
@@ -161,7 +179,7 @@ NORMALIZATION_ORDER: tuple[tuple[re.Pattern[str], str], ...] = (
 
 # §7.3.5 material edit
 MATERIAL_TERMS = re.compile(
-    r"recogni[sz]|covenant|default|waiver|reserve|allowance|impair|probable|"
+    r"(?<!federally )recogni[sz]|covenant|default|waiver|reserve|allowance|impair|probable|"
     r"reasonably possible|estimat|useful li(fe|ves)|going concern|restat|material weakness|"
     r"related part|guarantee",
     I,
@@ -206,7 +224,9 @@ WEIGHT_HEADER = re.compile(r"weight", I)
 PROXY_ALIASES: dict[str, re.Pattern[str]] = {
     "ADJ_EBITDA": re.compile(r"adjusted[\s-]+ebitda", I),
     "NONGAAP_EPS": re.compile(
-        r"(adjusted|non[\s-]?gaap)[\s-]+(diluted[\s-]+)?(eps|earnings[\s-]+per[\s-]+share)", I
+        r"(adjusted|non[\s-]?gaap)[\s-]+(diluted[\s-]+)?(eps|earnings[\s-]+per[\s-]+share)|"
+        r"core[\s-]+(eps|earnings(/\(loss\))?[\s-]+per[\s-]+share)",
+        I,
     ),
     "REVENUE": re.compile(r"(net[\s-]+)?(revenue|sales)([\s-]+growth)?", I),
     "TSR": re.compile(r"total[\s-]+shareholder[\s-]+return|\bTSR\b", I),
@@ -245,3 +265,14 @@ IMG_TAG = re.compile(r"<img\b", I)
 # A CD&A start counts when it sits on a heading-like line or in a self-reference such as
 # "This Compensation Discussion and Analysis ..." (text before the match on its line).
 CDA_SELF_REFERENCE_PREFIX = re.compile(r"^\s*(this|the|our)\s+$", I)
+
+# footnotes/proxy additions (audit fixes): St. abbreviation, non-note XBRL prefixes,
+# negation phrase and peer-group selection exclusion for proxy metric hits.
+EXTRA_ABBREVIATIONS = ("St.",)
+NON_NOTE_XBRL_PREFIXES = frozenset({"dei", "ecd", "cyd"})
+PROXY_NEGATION_PHRASE = re.compile(r"\b(does|do|did)\s+not\s+(believe|consider|use|rely)\b", I)
+PROXY_PEER_SELECTION = re.compile(
+    r"(peer[\s-]+group|peer[\s-]+companies).*(selected|selection|comparator|appropriate|removing|adding|criteria)|"
+    r"(selected|selection|comparator|appropriate|removing|adding|criteria).*(peer[\s-]+group|peer[\s-]+companies)",
+    I,
+)

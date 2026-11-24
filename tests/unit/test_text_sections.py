@@ -137,3 +137,20 @@ def test_earnings_release_empty() -> None:
     sec = locate_earnings_release("Revenue | $1,100 | $990\nmore")
     assert sec.status == "NOT_FOUND"
     assert sec.text == ""
+
+
+def test_earnings_deck_stops_at_spaced_financial_summary_heading() -> None:
+    sec = locate_earnings_release(_text("earnings_deck.htm"))
+    assert sec.status == "OK"
+    assert sec.text.endswith("on strong demand in Europe and Asia.")
+    assert "energy storage" not in sec.text
+    # The contents line mentions "Financial Summary" mid-line and does not cut.
+    assert "Highlights 03 Financial Summary" in sec.text
+
+
+def test_earnings_release_stops_at_run_of_numeric_lines() -> None:
+    sec = locate_earnings_release(_text("earnings_numeric_run.htm"))
+    assert sec.status == "OK"
+    assert sec.text.endswith("from automotive customers worldwide.")
+    assert "$1,100" not in sec.text
+    assert "Segment results" not in sec.text
