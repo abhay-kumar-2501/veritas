@@ -1497,3 +1497,31 @@ a.vx-src:hover { border-color: rgba(90, 200, 250, 0.45); transform: translateY(-
   border-radius: 999px;
   padding: 1px 7px;
 }
+
+/* simple view (D-612): plain-English evidence cards */
+.vx-scard { margin: 0 0 12px; padding: 18px 20px 16px 22px; }
+.vx-scard .vx-point-title { font-size: 17px; }
+.vx-scard .vx-point-text { font-size: 15px; color: var(--text); opacity: 0.92; max-width: 920px; }
+.vx-scard.is-context { opacity: 0.82; border-style: dashed; }
+.vx-scard-note { margin-top: 10px; font-size: 13.5px; line-height: 1.5; color: var(--sev-warning); }
+.vx-scard-said { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--hairline); }
+.vx-scard-said .vx-label { display: block; margin-bottom: 8px; }
+.vx-scard-links { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 14px; }
+.vx-scard-links .vx-label { margin-right: 4px; }
+.st-key-detailbar { margin: -6px 0 -10px; }
+.st-key-detailbar [data-testid="stCheckbox"] { justify-content: flex-end; }
+.st-key-detailbar label p { font-size: 13px; color: var(--text-2); }
+
+/* phone widths: stack the brand row, wrap chips, keep the page from scrolling sideways */
+@media (max-width: 720px) {
+  .vx-topbar { flex-direction: column; align-items: flex-start; gap: 10px; }
+  .vx-brand { flex-direction: column; gap: 4px; }
+  .vx-topbar-right { justify-content: flex-start; }
+  .vx-chip { white-space: normal; }
+  .st-key-detailbar { margin: 0 0 4px; }
+  .st-key-detailbar [data-testid="stCheckbox"] { justify-content: flex-start; }
+  .vx-scard { padding: 16px 14px 14px 16px; }
+  .vx-scard-links .vx-cite { max-width: 100%; }
+}
+.vx-point-head { flex-wrap: wrap; row-gap: 2px; }
+.vx-point-sev { white-space: nowrap; }

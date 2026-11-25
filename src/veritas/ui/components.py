@@ -504,7 +504,10 @@ def banner(text: str, kind: str = "notice", title: str = "Notice", raw_html: boo
 # ---------------------------------------------------------------------------
 
 
-def topbar(chips: Sequence[tuple[str, str]]) -> str:
+def topbar(
+    chips: Sequence[tuple[str, str]],
+    sub: str = "Narrative–Numbers screening terminal · SEC EDGAR",
+) -> str:
     """Brand row. `chips` are (text, css-modifier) pairs; text is app-defined."""
     chip_html = "".join(
         f'<span class="vx-chip {esc(mod)}"><span class="vx-dot"></span>{esc(text)}</span>'
@@ -513,7 +516,7 @@ def topbar(chips: Sequence[tuple[str, str]]) -> str:
     return one_line(
         '<div class="vx vx-topbar"><div class="vx-brand">'
         '<span class="vx-brand-mark">VERITAS<i>.</i></span>'
-        '<span class="vx-brand-sub">Narrative–Numbers screening terminal · SEC EDGAR</span>'
+        f'<span class="vx-brand-sub">{esc(sub)}</span>'
         f'</div><div class="vx-topbar-right">{chip_html}</div></div>'
     )
 
@@ -690,7 +693,8 @@ def score_band(score: int | None) -> str:
     return "critical"
 
 
-def score_ring(score: int | None) -> str:
+def score_ring(score: int | None, empty_label: str = "INSUFFICIENT<br>DATA") -> str:
+    """`empty_label` is fixed app copy (may contain <br>), never user or filing text."""
     band = score_band(score)
     colour = {
         "noflag": "var(--sev-noflag)",
@@ -714,7 +718,7 @@ def score_ring(score: int | None) -> str:
         return one_line(
             '<div class="vx-ring is-insufficient"><svg viewBox="0 0 200 200" aria-hidden="true">'
             f"{track}</svg>"
-            '<div class="vx-ring-center"><div class="vx-score-insufficient">INSUFFICIENT<br>DATA'
+            f'<div class="vx-ring-center"><div class="vx-score-insufficient">{empty_label}'
             "</div></div></div>"
         )
     s = max(0, min(100, int(score)))

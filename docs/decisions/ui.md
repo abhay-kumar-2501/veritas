@@ -154,3 +154,48 @@ Goal: a reader with no finance background understands what VERITAS does and what
   - On Ratios, the explainer sits above the formula.
   - Footnote explanations are keyed by (form, sentence).
 - **Re-check (N1).** Plain "could not check" reasons are keyed per engine reason (receivables, inventory and software materiality gates; missing tag; missing quarters). Unknown engine text falls back to a generic plain phrase instead of showing raw. The row is labelled "Not checked", and the Coverage tip notes that a check with nothing to report still counts as run.
+
+### D-612 Simple view by default; analyst detail behind a switch  (2026-11-25, M8)
+- **Why.** The owner's goal is reach: someone with no finance or capital-markets background should understand every insight on the page. The plain layer from D-610 sat on top of technical cards, so a newcomer still met DSO, XBRL, 10-K, CIK, "Module D" and accession numbers.
+- **Two views of the same result.** The page opens in a simple view (`src/veritas/ui/simple.py`). The "Analyst detail" switch (session key `_detail`) restores the technical view, which is unchanged. Both views render the same `AnalysisResult`; the simple view computes nothing new and changes no severity.
+- **What the simple view changes.**
+  - Report names replace form codes: annual report, quarterly report, company announcement, executive pay report. Periodic reports are named by the period they cover; other documents by the month they were filed.
+  - Tabs: Summary, Fine-print changes, Trends over time, Executive pay. Severity filter: Everything, Big gaps, Worth a closer look, No flag.
+  - Evidence cards show the severity in words, the plain sentence, the managers' verbatim quote if one was paired, the everyday analogy and "Check it yourself" links. Raw inputs, formulas, XBRL tags and accession numbers are analyst-only.
+  - Score panel: "Our score", "Number checks we could run: N of M", "Points taken off … of N max", and a plain caveat that the score is a rough guide not adjusted for industry.
+  - Identity shows the short name, official name, stock symbol and the month the financial year ends. CIK, SIC and parser version are analyst-only.
+  - Plain labels and captions throughout the redline, hedging, ratios, display-only metrics, proxy table, banners, progress stages, error messages and footer. Filing quotes stay verbatim.
+- **Wording in `plain.py` (both views):** "unsold goods" instead of inventory or stock; "spare cash (free cash flow)"; "pay given to all employees in company shares"; "custom adjusted figure" for non-GAAP; "the value of everything the company owns" for total assets; "large reorganization costs (such as layoffs or closing sites)" for restructuring.
+- **Guard.** `tests/unit/test_simple_view.py` renders every tab for every seed in the simple view and fails on a jargon list. It excludes verbatim filing text, curly-quoted terms that a sentence explains, glossary rows, hover tips and the methodology document. A sanity check confirms the scan does flag the analyst view.
+- **Not changed.** The PDF tear-sheet keeps the technical wording; its button help says so.
+
+### D-613 Fable review of the simple view: fixes  (2026-11-25, M8)
+- **B1.** "No inventory tag" and "capitalized software not tagged" now read "we couldn't find … in the company's data". They no longer say the company doesn't report the figure. Boeing does report inventories, under a tag we don't map.
+- **B2.** The summary rows now match coverage: No flag raised / Nothing to check (A5 with no restructuring data, counted as run) / Left out (engine NOT_APPLICABLE, outside the denominator) / Couldn't check (NOT_COMPUTABLE). The score panel shows "Number checks run: N of M" with "K more were left out", plus a tooltip that explains all three. A test asserts the lists add up to the engine's coverage for every seed.
+- **B3.** A later 10-K/A is called an amendment, not a correction.
+- **B4.** The summary sentence counts flags, names any big gaps, and states how many are direct statement–number clashes (none on the seeds). Headlines describe flag counts ("Few flags", "A mixed picture", "Many flags"), not whether the story is true. The score title reads "Fewer flags, higher score".
+- **B5.** The profit-vs-cash sentence uses the engine's `ccr` (no cents when it is not meaningful), says "a loss of" and "used up … of cash" for negatives, omits a gap that rounds to 0%, and explains the "profit up, cash down ≥ 10%" trigger.
+- **B6.** A4 has a numbers sentence (share of software and research spending counted as an investment, in percentage points). A flagged finding is never dropped from the summary; unscored checks are never points.
+- **Should-fix items:**
+  - The A5 sentence states the 0.5%-of-sales test, eight-quarter and three-year counts when CRITICAL, and unknown quarters.
+  - The acquisition-guard wording matches the rule (heavy buying, or goodwill up ≥ 10%).
+  - Pay tie-ins read "appears to"; C1 says "at least half of" instead of a recomputed percentage, and the duplicate sentence is merged.
+  - The A4 question names software and research spending.
+  - Reasons for financial and shell issuers.
+  - "We don't score this kind of company" for NOT SCORED.
+  - Unknown banners get a plain fallback.
+  - Restated figures, payables-stretch and capex notes appear on the context tiles.
+  - Neutral check names ("Unsold goods on hand", "Repeated 'one-time' costs").
+  - The Trends intro names the Summary tab.
+  - One glossary per page, limited to terms the simple view uses.
+  - Per-check reasons when no pay flag is raised.
+  - The "Share" column is renamed "Weight".
+  - The hedging status explains its rule.
+  - "Notable" is defined.
+  - "Check it yourself" links the filings nearest the card's period.
+- **Re-check (Fable).** B1–B6 confirmed fixed; "ready to show the owner". Its remaining should-fix items, also fixed:
+  - When the engine's own change rounds differently from the displayed values, it is shown with one decimal, so the stated change never contradicts the threshold (A1/A2/A4).
+  - The Trends captions for A4/A5 use the corrected wording.
+  - The restated tile names the revised figures.
+  - The ring reads "Not scored" or "Not enough data".
+  - A ratio just under 1 reads "about as much cash as profit".

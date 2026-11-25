@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Any
 
+from veritas.config import t
 from veritas.engine.narrative import _has_no_data
 from veritas.ui.components import as_list, fmt_money, get
 
@@ -51,8 +52,8 @@ MODULE_PLAIN: dict[str, tuple[str, str]] = {
 
 CLUSTER_TOPIC: dict[str, str] = {
     "DEMAND": "strong demand or sales growth",
-    "MARGIN": "improving margins or efficiency",
-    "ONETIME": "costs being one-time",
+    "MARGIN": "keeping more profit from each dollar of sales",
+    "ONETIME": "some costs being one-offs",
 }
 
 
@@ -66,74 +67,75 @@ class CheckPlain:
 
 CHECK_PLAIN: dict[str, CheckPlain] = {
     "A1_DSO": CheckPlain(
-        "Days to get paid",
-        "How many days of sales do customers still owe the company?",
-        "If what customers owe grows faster than sales, reported sales can be running ahead "
-        "of the cash actually coming in.",
+        "How long customers take to pay",
+        "How many days' worth of sales do customers still owe the company?",
+        "When customers take longer and longer to pay, sales on paper can run ahead of the "
+        "money actually coming in.",
         "Like a shop where more customers each month say “put it on my tab”.",
     ),
     "A2_DIO": CheckPlain(
-        "Days of unsold stock",
-        "How many days of sales is sitting in the warehouse?",
-        "Stock piling up faster than it sells can mean demand is cooling, or that some of "
-        "it may later have to be marked down.",
+        "Unsold goods on hand",
+        "How many days of sales are sitting unsold in the warehouse?",
+        "Goods piling up faster than they sell can mean demand is slowing, or that some of "
+        "them may later have to be sold off cheaply.",
         "Like a bakery baking more loaves each week than it sells.",
     ),
     "A3_ACCRUALS": CheckPlain(
-        "Profit vs. actual cash",
+        "Profit vs. cash coming in",
         "Does the profit the company reports turn into real cash?",
-        "Profit is an accounting figure that includes amounts not yet received; cash is what "
-        "actually arrives. A gap means part of the profit has not yet shown up as cash.",
+        "Profit on paper can include money the company hasn't received yet; cash is what "
+        "actually arrived. A gap means part of the profit hasn't shown up as cash yet.",
         "Like a payslip that shows more than what actually lands in your bank account.",
     ),
     "A4_CAPRATE": CheckPlain(
-        "Software costs recorded as assets",
-        "Is the company recording more of its software development spending as a long-term asset?",
-        "Software spending recorded as an asset is spread over future years instead of "
-        "reducing this year's profit, so a rising share lifts current profit. The treatment "
-        "is allowed; the check watches the trend.",
+        "Software costs spread over future years",
+        "Is a growing share of the company's software and research spending being counted as "
+        "a long-term investment?",
+        "Spending counted as an investment is spread over several years instead of being "
+        "subtracted from this year's profit, so doing more of it makes this year's profit "
+        "look higher. It's allowed; the check watches whether it's rising.",
         "Like spreading the cost of a new laptop over three years instead of counting it all "
         "today.",
     ),
     "A5_RESTRUCT": CheckPlain(
-        "Repeated restructuring costs",
-        "Do supposedly one-off restructuring costs show up again and again?",
-        "Costs that recur every year are part of the normal cost of doing business, even "
-        "when they are labelled one-time.",
+        "Repeated “one-time” costs",
+        "Do costs described as one-off (like layoffs or closing sites) show up again and again?",
+        "Costs that come back every year are part of the normal cost of running the "
+        "business, even when they're called one-time.",
         "Like a “one-off” car repair you pay for every few months.",
     ),
     "X_CAPEX_DA": CheckPlain(
-        "Investment vs. wear and tear",
-        "Is the company spending more on equipment than it wears out?",
+        "New equipment vs. wear and tear",
+        "Is the company spending more on new equipment and buildings than it wears out?",
         "Shown for context only.",
-        "Like comparing what you spend on a house with how fast it ages.",
+        "Like comparing what you spend fixing up a house with how fast it ages.",
     ),
     "X_DPO": CheckPlain(
-        "Days to pay suppliers",
+        "How long it takes to pay its suppliers",
         "How long does the company take to pay its own bills?",
-        "Paying suppliers later boosts cash in the short term. Shown for context only.",
+        "Paying suppliers later keeps more cash in hand for a while. Shown for context only.",
         "Like paying your credit card later to keep cash in hand.",
     ),
     "X_FCF": CheckPlain(
-        "Free cash flow",
-        "How much cash is left after running and investing in the business?",
+        "Spare cash",
+        "How much cash is left after running the business and paying for new equipment?",
         "Shown for context only.",
-        "Like your take-home pay minus the cost of maintaining your home.",
+        "Like your take-home pay minus what it costs to keep your home in shape.",
     ),
     "X_FCF_SBC": CheckPlain(
-        "Free cash flow after stock pay",
-        "How much cash is left once you count staff paid in shares as a real cost?",
+        "Spare cash after paying staff in shares",
+        "How much spare cash is left if paying staff in company shares is counted as a cost?",
         "Shown for context only.",
-        "Like counting gift cards you hand out as part of your spending.",
+        "Like counting the gift cards you hand out as part of your spending.",
     ),
     "X_ROIC": CheckPlain(
-        "Return on money invested",
-        "How much profit does each dollar invested in the business earn?",
+        "Profit on money invested",
+        "How much profit does each dollar put into the business earn?",
         "Shown for context only.",
         "Like the yearly return on money you put into a small business.",
     ),
     "X_RESTATED": CheckPlain(
-        "Revised past figures",
+        "Past figures changed later",
         "Did the company later change numbers it had already reported?",
         "Shown for context only.",
         "Like a receipt reissued with a different total.",
@@ -238,56 +240,118 @@ def numbers_sentence(check: Any, company: str) -> str | None:
         cur, prior = _num(outputs.get("dso")), _num(outputs.get("dso_prior_year"))
         if cur is None or prior is None:
             return None
-        trend = _trend(cur, prior, unit="days")
+        trend = _trend(cur, prior, unit="days", delta=_num(outputs.get("delta_dso_days")))
         return (
-            f"At the end of {when}, {company}'s customers owed it the equivalent of about "
-            f"{_days(cur)} of sales, {trend} a year earlier ({_days(prior)})."
+            f"At the end of {when}, {company}'s customers still owed it about "
+            f"{_days(cur)}' worth of sales, {trend} a year earlier ({_days(prior)})."
         )
     if cid == "A2_DIO":
         cur, prior = _num(outputs.get("dio")), _num(outputs.get("dio_prior_year"))
         if cur is None or prior is None:
             return None
-        trend = _trend(cur, prior, unit="days")
+        trend = _trend(cur, prior, unit="days", delta=_num(outputs.get("delta_dio_days")))
         return (
-            f"At the end of {when}, {company} held about {_days(cur)}' worth of stock "
-            f"(measured at cost), {trend} a year earlier ({_days(prior)})."
+            f"At the end of {when}, {company} had enough unsold goods on hand to cover about "
+            f"{_days(cur)} of sales, {trend} a year earlier ({_days(prior)})."
         )
     if cid == "A3_ACCRUALS":
-        ni, ocf = _num(inputs.get("NI_ttm")), _num(inputs.get("OCF_ttm"))
-        if ni is None or ocf is None:
+        return _a3_sentence(check, outputs, inputs, company, when)
+    if cid == "A4_CAPRATE":
+        cur = _num(outputs.get("cap_rate"))
+        prior = _num(outputs.get("cap_rate_prior_year"))
+        if cur is None or prior is None:
             return None
-        base = (
-            f"Over the 12 months to {when}, {company} reported {fmt_money(ni)} of profit "
-            f"and brought in {fmt_money(ocf)} of cash from running the business"
+        pp = _num(outputs.get("cap_rate_change_pp"))
+        trend = _trend(
+            cur * 100, prior * 100, unit="percentage points", delta=None if pp is None else pp * 100
         )
-        ar = _num(outputs.get("accrual_ratio"))
-        size = (
-            f" The gap equals about {ar * 100:,.0f}% of the company's average total assets."
-            if ar is not None and ar > 0 and ocf < ni
-            else ""
-        )
-        if ni > 0:
-            cents = ocf / ni * 100
-            if cents < 100:
-                return base + f": about {cents:,.0f}\u00a2 of cash for every $1 of profit." + size
-            return base + ": more cash than profit."
-        return base + "." + size
-    if cid == "A5_RESTRUCT":
-        n4 = _num(outputs.get("material_quarters_last4"))
-        if n4 is None:
-            return None
-        q = "quarter" if round(n4) == 1 else "quarters"
         return (
-            f"In the last four quarters to {when}, {company} booked significant "
-            f"restructuring costs in {n4:,.0f} {q}."
+            f"Over the 12 months to {when}, {company} counted about {cur * 100:,.0f}% of its "
+            f"software and research spending as a long-term investment instead of a cost, "
+            f"{trend} a year earlier ({prior * 100:,.0f}%)."
         )
+    if cid == "A5_RESTRUCT":
+        return _a5_sentence(check, outputs, company, when)
     return None
 
 
-def _trend(cur: float, prior: float, unit: str) -> str:
+def _a3_sentence(
+    check: Any, outputs: Mapping[str, Any], inputs: Mapping[str, Any], company: str, when: str
+) -> str | None:
+    ni, ocf = _num(inputs.get("NI_ttm")), _num(inputs.get("OCF_ttm"))
+    if ni is None or ocf is None:
+        return None
+    earned = (
+        f"reported {fmt_money(ni)} of profit" if ni > 0 else f"reported a loss of {fmt_money(-ni)}"
+    )
+    if ocf >= 0:
+        cash = f"brought in {fmt_money(ocf)} of cash from its day-to-day business"
+    else:
+        cash = f"its day-to-day business used up {fmt_money(-ocf)} of cash"
+    joiner = " and " if ocf >= 0 else (" while " if ni > 0 else " and ")
+    out = f"Over the 12 months to {when}, {company} {earned}{joiner}{cash}"
+    ccr = _num(outputs.get("ccr"))  # the engine's own ratio; None when not meaningful
+    if ccr is not None and 0 <= ccr < 1 and round(ccr * 100) < 100:
+        out += f": about {ccr * 100:,.0f}\u00a2 of cash for every $1 of profit."
+    elif ccr is not None and 0 <= ccr < 1:
+        out += ": about as much cash as profit."
+    elif ccr is not None and ccr >= 1:
+        out += ": more cash than profit."
+    else:
+        out += "."
+    ar = _num(outputs.get("accrual_ratio"))
+    if ar is not None and ar > 0 and round(ar * 100) >= 1:
+        out += (
+            f" The gap is about {ar * 100:,.0f}% of the value of everything the company owns "
+            "(averaged over the year)."
+        )
+    notes = " ".join(str(a) for a in as_list(get(check, "annotations"))).lower()
+    growth = _num(outputs.get("OCF_ttm_growth"))
+    if "operating cash flow fell" in notes and growth is not None:
+        out += (
+            " Profit rose from a year earlier while cash from the day-to-day business fell by "
+            f"about {abs(growth) * 100:,.0f}%."
+        )
+    return out
+
+
+def _a5_sentence(check: Any, outputs: Mapping[str, Any], company: str, when: str) -> str | None:
+    n4 = _num(outputs.get("material_quarters_last4"))
+    if n4 is None:
+        return None
+    pct = f"{t('RESTRUCT_MATERIAL_PCT') * 100:g}%"
+    q = "quarter" if round(n4) == 1 else "quarters"
+    out = (
+        f"In the last four quarters to {when}, {company} reported reorganization costs (such "
+        f"as layoffs or closing sites) of at least {pct} of that quarter's sales in "
+        f"{n4:,.0f} {q}."
+    )
+    if str(get(check, "severity")) == "CRITICAL":
+        n8 = _num(outputs.get("material_quarters_last8"))
+        years = _num(outputs.get("material_fiscal_years_last3"))
+        if n8 is not None:
+            out += f" Over the last eight quarters it did so in {n8:,.0f}."
+        if years is not None and round(years) >= 3:
+            out += " It also did so in each of the last three financial years."
+    unk = _num(outputs.get("quarters_unknown_last4"))
+    if unk:
+        out += (
+            f" We couldn't work out the figure for {unk:,.0f} of those four quarters, so the "
+            "count may be low."
+        )
+    return out
+
+
+def _trend(cur: float, prior: float, unit: str, delta: float | None = None) -> str:
     """Change between the two values as displayed (rounded), so the arithmetic on screen
-    adds up; the unit is singular for 1."""
+    adds up; the unit is singular for 1. When the engine's own change (`delta`) rounds to
+    a different whole number, it is shown with one decimal instead, so the stated change
+    never contradicts the threshold that raised the flag."""
     diff = round(cur) - round(prior)
+    if delta is not None and round(delta) != diff:
+        if round(abs(delta), 1) == 0:
+            return "about the same as"
+        return f"{'up' if delta > 0 else 'down'} {abs(delta):,.1f} {unit} from"
     if diff == 0:
         return "about the same as"
     word = unit[:-1] if abs(diff) == 1 and unit.endswith("s") else unit
@@ -295,9 +359,15 @@ def _trend(cur: float, prior: float, unit: str) -> str:
 
 
 _ANNOT_PLAIN: dict[str, str] = {
-    "acquisition-distorted": "Goodwill or spending on acquisitions jumped over the past year "
-    "(usually a sign of buying other businesses), which can distort this measure; read it "
-    "with extra caution.",
+    "acquisition-distorted": "The company spent heavily on buying other businesses over the "
+    "past year, or the goodwill it records from past purchases grew by 10% or more. That can "
+    "throw this measure off; read it with extra caution.",
+    "low reliability for financials": "For banks, insurers and similar companies this measure "
+    "is less reliable, so it isn't scored.",
+    "payables stretch": "It is taking noticeably longer to pay its suppliers than a year "
+    "earlier, which temporarily boosts cash.",
+    "capex at least 2x": "It is spending at least twice as much on new equipment and "
+    "buildings as they wear out, and that gap is growing.",
     "restated": "The company later revised some of these figures; the revised values are used.",
 }
 
@@ -334,27 +404,28 @@ def finding_plain(finding: Any, company: str) -> str | None:
         None,
     )
     prefix = (
-        "Earlier period, not scored. "
+        "Earlier period, not counted in the score. "
         if str(get(finding, "category", "")) == "accounting_prior_period"
         else ""
     )
     if get(finding, "contradiction", False) and topic:
         return (
-            f"{prefix}Management pointed to {topic}, while this measure moved in a direction "
-            f"that can sit uneasily with that: {_lower_first(numbers)}"
+            f"{prefix}Managers talked about {topic}, but this measure raised a flag for the same "
+            f"period: "
+            f"{_lower_first(numbers)}"
         )
     if sev in ("CRITICAL", "WARNING") and not claims:
         cid = str(get(check, "check_id", ""))
         if cid == "A3_ACCRUALS":  # no statement type is ever paired with this check
             return prefix + numbers
         return (
-            f"{prefix}{numbers} Our text scan did not pair a management statement with this "
-            "measure (it only looks for certain kinds of statements, such as claims about "
-            "demand or margins)."
+            f"{prefix}{numbers} We didn't find a statement from managers about this to compare it "
+            "with (we only look for certain kinds of statements, such as claims about strong "
+            "demand or rising profits)."
         )
     if sev == "NO_FLAG" and topic:
         return (
-            f"Management pointed to {topic}, and this measure raised no flag: "
+            f"Managers talked about {topic}, and this measure raised no flag: "
             f"{_lower_first(numbers)}"
         )
     return numbers
@@ -383,43 +454,58 @@ def incentive_plain(finding: Any) -> str | None:
     fid = str(get(finding, "id", ""))
     expl = str(get(finding, "explanation", "") or "")
     if fid == "C1":
-        parts = []
+        sbc_txt: str | None = None
+        clauses: list[str] = []
         m = _SBC_FCF.search(expl)
         if m:
             sbc, fcf = _money_value(m.group(1)), _money_value(m.group(2))
             if sbc is not None and fcf is not None and fcf > 0:
-                cmp = "more than" if sbc > fcf else f"equal to about {sbc / fcf * 100:,.0f}% of"
-                parts.append(
-                    f"{m.group(1)} of stock-based pay to all employees, {cmp} the "
-                    f"{m.group(2)} of free cash flow the business produced"
+                sbc_txt = m.group(1)
+                # The engine fires when stock pay is at least half of free cash flow
+                # (or more than all of it); no new percentage is computed here.
+                cmp = "more than" if sbc > fcf else "at least half of"
+                clauses.append(
+                    f"{cmp} the {m.group(2)} of spare cash (\u201cfree cash flow\u201d) the "
+                    "business produced after its running costs and new equipment"
                 )
         m = _SBC_REV.search(expl)
         if m:
-            parts.append(f"{m.group(1)} of stock-based pay, equal to {m.group(2)} of revenue")
+            sbc_txt = sbc_txt or m.group(1)
+            clauses.append(f"equal to {m.group(2)} of its sales")
         tail = (
-            " Over the last 12 months the company recorded " + "; and ".join(parts) + "."
-            if parts
+            f" Over the last 12 months the company recorded {sbc_txt} of pay given to all "
+            "employees in company shares, " + " and ".join(clauses) + "."
+            if sbc_txt and clauses
             else ""
         )
         return (
-            "Part of executives' pay depends on an adjusted (\u201cnon-GAAP\u201d) figure, one "
-            "the company defines itself." + tail + " Some adjusted figures leave stock-based "
-            "pay out; we did not check what this company's figure excludes."
+            "Part of the top bosses' pay appears to depend on a custom \u201cadjusted\u201d "
+            "figure that the company calculates itself, instead of the standard accounting "
+            "version." + tail + " Some custom figures leave out pay given in shares; we did not "
+            "check whether this company's figure does."
         )
     if fid == "C2":
         m = _GW.search(expl)
         bits = []
         if "rose" in expl:
-            bits.append("its share of assets rose over the past year")
+            bits.append("that share rose over the past year")
         if "acquisition guard" in expl:
-            bits.append("goodwill or acquisition spending jumped recently")
-        share = f" Goodwill makes up {m.group(1)} of assets" if m else " Goodwill is large"
+            bits.append(
+                "it recently spent heavily on buying other businesses, or its goodwill grew "
+                "by 10% or more"
+            )
+        share = (
+            f" Goodwill makes up {m.group(1)} of everything the company owns"
+            if m
+            else " Goodwill is a large part of everything the company owns"
+        )
         return (
-            "Executives are partly paid for revenue or deal-driven growth, and the company "
-            "carries a lot of goodwill (the premium paid for businesses it bought)."
+            "Top bosses' pay appears to be partly tied to sales or to deals, and much of what "
+            "the company owns on paper is \u201cgoodwill\u201d: the extra it paid, above the "
+            "value of what it got, when buying other businesses."
             + share
             + (", and " + " and ".join(bits) if bits else "")
-            + ". Growth that is bought can lift a pay metric without the existing business "
+            + ". Growth that is bought can lift a pay target without the original business "
             "growing."
         )
     return None
@@ -430,16 +516,17 @@ def edit_plain(edit: Mapping[str, Any]) -> str:
     note = str(edit.get("note") or "a").strip()
     kind = str(edit.get("kind") or "").upper()
     if kind == "INSERTED":
-        s = f"A new sentence was added to the “{note}” note."
+        s = f"A new sentence was added to the “{note}” section of the fine print."
     elif kind == "DELETED":
-        s = f"A sentence was removed from the “{note}” note."
+        s = f"A sentence was removed from the “{note}” section of the fine print."
     else:
-        s = f"A sentence in the “{note}” note was reworded."
+        s = f"A sentence in the “{note}” section of the fine print was reworded."
     if edit.get("softened"):
         s += " The new wording is less definite (for example “will” became “may”)."
     m = _TERM.search(str(edit.get("explanation") or ""))
     if m:
-        s += f" It contains “{m.group(1)}”, one of the accounting terms we watch for."
+        verb = "contained" if kind == "DELETED" else "contains"
+        s += f" It {verb} “{m.group(1)}”, one of the accounting terms we watch for."
     return s
 
 
@@ -449,14 +536,28 @@ def edit_plain(edit: Mapping[str, Any]) -> str:
 
 
 _REASON_PLAIN: tuple[tuple[str, str], ...] = (
-    ("receivables immaterial", "customer balances are under 2% of yearly sales, too small to test"),
-    ("inventory immaterial", "inventory is under 2% of yearly cost of sales, too small to test"),
+    (
+        "receivables immaterial",
+        "customers owe it less than 2% of a year's sales, too little to test",
+    ),
+    (
+        "inventory immaterial",
+        "its unsold goods are worth less than 2% of what it spends on the goods it sells in a "
+        "year, too little to test",
+    ),
     (
         "capitalized software immaterial",
-        "software costs recorded as assets are under 1% of yearly sales, too small to test",
+        "the software spending it spreads over future years is under 1% of a year's sales, "
+        "too little to test",
     ),
-    ("no inventory tag", "no inventory figure found in the company's data"),
-    ("capitalized software not tagged", "the company doesn't report this figure separately"),
+    (
+        "no inventory tag",
+        "we couldn't find a figure for unsold goods in the company's data in a form we can read",
+    ),
+    ("capitalized software not tagged", "we couldn't find this figure in the company's data"),
+    ("financial issuer", "this check doesn't apply to banks, insurers and similar companies"),
+    ("issuer", "this check doesn't apply to this kind of company"),
+    ("≤ 0", "the figures don't allow a meaningful result"),
     ("4 discrete quarters required", "not enough quarters of data to cover a full year"),
     ("not tagged", "a figure the check needs isn't in the company's data"),
     ("unavailable", "a figure the check needs isn't in the company's data"),
@@ -486,7 +587,7 @@ class Point:
     severity: str  # CRITICAL | WARNING | NO_FLAG
     title: str
     text: str
-    view: str  # which tab shows the evidence
+    view: str  # where the evidence is: "below", "pay" or "fine print" (story maps to a tab)
     analogy: str = ""
 
 
@@ -495,19 +596,25 @@ class Verdict:
     headline: str
     summary: str
     points: tuple[Point, ...]
-    good: tuple[str, ...]
-    unchecked: tuple[str, ...]
+    good: tuple[str, ...]  # computed, scored, no flag, with data
+    unchecked: tuple[str, ...]  # could not run (missing figures) or pay not readable
+    empty: tuple[str, ...] = ()  # ran, but found nothing to examine (counts as run)
+    not_applicable: tuple[str, ...] = ()  # left out for this company (engine NOT_APPLICABLE)
 
 
-def headline_for(score: Any) -> str:
+def headline_for(score: Any, label: Any = None) -> str:
+    """Headline by the score-ring bands. It describes how many flags were raised, not
+    whether the company's story is true."""
+    if str(label or "").upper() == "NOT SCORED":
+        return "We don't score this kind of company."
     s = _num(score)
     if s is None:
         return "Not enough data to give a score."
     if s >= 85:
-        return "The story and the numbers largely line up."
+        return "Few flags: little stood out."
     if s >= 60:
         return "A mixed picture: some things worth a closer look."
-    return "Several places where the story and the numbers pull apart."
+    return "Many flags: several things worth a closer look."
 
 
 def _scored_a(mods: Mapping[str, Any]) -> list[Any]:
@@ -516,6 +623,7 @@ def _scored_a(mods: Mapping[str, Any]) -> list[Any]:
         for f in as_list(get(mods.get("A"), "findings"))
         if str(get(f, "category")) == "accounting"
         and str(get(f, "severity")) in ("CRITICAL", "WARNING")
+        and bool(get(get(f, "check"), "scored", True))
     ]
     rank = {"CRITICAL": 0, "WARNING": 1}
     out.sort(key=lambda f: (rank.get(str(get(f, "severity")), 9), str(get(f, "id", ""))))
@@ -530,28 +638,31 @@ def verdict(result: Any, edits: Sequence[Mapping[str, Any]] = ()) -> Verdict:
         mods = {}
     score_obj = get(result, "score")
     score = get(score_obj, "score")
+    label = get(score_obj, "label")
 
     points: list[Point] = []
+    clashes = 0
     for f in _scored_a(mods):
         check = get(f, "check")
         cid = str(get(check, "check_id", ""))
         cp = CHECK_PLAIN.get(cid)
+        if get(f, "contradiction", False):
+            clashes += 1
         text = numbers_sentence(check, company) if check is not None else None
-        if cp is None or text is None:
-            continue
-        extra = ""
+        # A flagged finding is never dropped: without a numbers sentence, say why it matters.
+        body = f"{text} {cp.why}" if text and cp else (cp.why if cp else str(get(f, "title", "")))
         for a in as_list(get(check, "annotations")):
             p = annotation_plain(a)
             if p:
-                extra = " " + p
+                body += " " + p
                 break
         points.append(
             Point(
                 str(get(f, "severity")),
-                cp.name,
-                f"{text} {cp.why}{extra}",
+                cp.name if cp else str(get(f, "title", "Flag")),
+                body,
                 "below",
-                cp.analogy,
+                cp.analogy if cp else "",
             )
         )
 
@@ -561,7 +672,7 @@ def verdict(result: Any, edits: Sequence[Mapping[str, Any]] = ()) -> Verdict:
         text = incentive_plain(f)
         if text:
             sev = str(get(f, "severity"))
-            points.append(Point(sev, "How executives are paid", text, "the Proxy tab"))
+            points.append(Point(sev, "How executives are paid", text, "pay"))
 
     scored_edits = [e for e in edits if str(e.get("form")) == "10-K"]
     if scored_edits:
@@ -583,13 +694,14 @@ def verdict(result: Any, edits: Sequence[Mapping[str, Any]] = ()) -> Verdict:
             Point(
                 "WARNING",
                 "Edits to the fine print",
-                f"{company} made {n} notable {'edit' if n == 1 else 'edits'} to the notes in "
-                f"its latest annual report compared with the year before"
+                f"{company} made {n} notable {'edit' if n == 1 else 'edits'} to the fine print "
+                f"(the detailed notes) in its latest annual report compared with the year "
+                f"before"
                 + where
                 + (
                     ". It is shown word by word." if n == 1 else ". Each one is shown word by word."
                 ),
-                "the Redline tab",
+                "fine print",
             )
         )
 
@@ -599,52 +711,84 @@ def verdict(result: Any, edits: Sequence[Mapping[str, Any]] = ()) -> Verdict:
             Point(
                 "WARNING",
                 "More cautious wording",
-                f"{company}'s notes use noticeably more hedge words (such as “may” "
-                "or “could”) than a year earlier.",
-                "the Redline tab",
+                f"{company}'s fine print uses noticeably more cautious words (such as "
+                "\u201cmay\u201d or \u201ccould\u201d) than a year earlier.",
+                "fine print",
             )
         )
 
     good: list[str] = []
     unchecked: list[str] = []
+    empty: list[str] = []
+    not_applicable: list[str] = []
     for k in as_list(get(mods.get("A"), "checks")):
         cid = str(get(k, "check_id", ""))
         cp = CHECK_PLAIN.get(cid)
-        if not cid.startswith("A") or cp is None:
+        if not cid.startswith("A") or cp is None or not bool(get(k, "scored", True)):
             continue
         state = str(get(k, "state"))
         if state == "COMPUTED" and str(get(k, "severity")) == "NO_FLAG":
             if _no_data(k):
-                unchecked.append(f"{cp.name} (nothing reported to check)")
+                empty.append(f"{cp.name} (no such figures found in the company's data)")
             else:
                 good.append(cp.name)
-        elif state in ("NOT_COMPUTABLE", "NOT_APPLICABLE"):
+        elif state == "NOT_APPLICABLE":
+            not_applicable.append(f"{cp.name} ({_reason_plain(get(k, 'reason'))})")
+        elif state == "NOT_COMPUTABLE":
             unchecked.append(f"{cp.name} ({_reason_plain(get(k, 'reason'))})")
     c_status = str(get(mods.get("C"), "status", ""))
     if c_status == "low_confidence":
         unchecked.append(
-            "How executives are paid (the pay details could not be read reliably, so nothing "
-            "was scored)"
+            "How executives are paid (we couldn't read the pay details reliably, so this part "
+            "wasn't scored)"
         )
     elif c_status in ("unavailable", "error", "timeout"):
-        unchecked.append("How executives are paid (no usable proxy statement)")
+        unchecked.append("How executives are paid (we couldn't find a usable yearly pay report)")
 
     n_flags = len(points)
-    if score is None:
+    if str(label or "").upper() == "NOT SCORED":
+        summary = (
+            "VERITAS doesn't give a score to this kind of company. Any results below are "
+            "shown for reference only."
+        )
+    elif score is None:
         summary = (
             f"Too many of {company}'s figures were missing to score it fairly. Missing data is "
             "never counted as a pass."
         )
     else:
-        thing = "thing" if n_flags == 1 else "things"
-        summary = (
-            f"{company} scores {int(score)} out of 100. We compared what its managers wrote "
-            "with the numbers it reported to the SEC"
-            + (
-                f" and found {n_flags} {thing} worth a closer look."
-                if n_flags
-                else " and nothing stood out."
+        n_big = sum(1 for p in points if p.severity == "CRITICAL")
+        if n_flags:
+            found = f", and raised {n_flags} {'flag' if n_flags == 1 else 'flags'}" + (
+                f", including {n_big} big {'gap' if n_big == 1 else 'gaps'}." if n_big else "."
             )
-            + " A flag is a reason to read further, not proof that anything is wrong."
+            if clashes:
+                found += (
+                    f" In {clashes} of them, something managers said sits next to a number that "
+                    "raised a flag for the same period."
+                )
+            else:
+                found += (
+                    " It isn't a direct clash between something managers said and the numbers; "
+                    "it comes from the numbers, the fine print or pay on its own."
+                    if n_flags == 1
+                    else " None of them is a direct clash between something managers said and "
+                    "the numbers; each comes from the numbers, the fine print or pay on its own."
+                )
+        else:
+            found = ", and nothing stood out."
+        summary = (
+            f"{company} scores {int(score)} out of 100. We ran automated checks on its numbers, "
+            "the fine print of its reports and how its executives are paid"
+            + found
+            + " A flag is a reason to look closer, not proof that anything is wrong."
         )
-    return Verdict(headline_for(score), summary, tuple(points), tuple(good), tuple(unchecked))
+    return Verdict(
+        headline_for(score, label),
+        summary,
+        tuple(points),
+        tuple(good),
+        tuple(unchecked),
+        tuple(empty),
+        tuple(not_applicable),
+    )

@@ -27,6 +27,7 @@ from veritas.config import (
     get_settings,
 )
 from veritas.ui import components as c
+from veritas.ui import simple as sv
 from veritas.ui import story, views
 from veritas.ui.commands import (
     VALID_COMMANDS,
@@ -240,8 +241,9 @@ def classify_error(exc: BaseException, display: str) -> dict[str, Any]:
     if name == "TickerNotFound":
         sugg = [str(s) for s in (getattr(exc, "suggestions", None) or [])][:5]
         return {
-            "title": "Ticker not found (delisted/renamed tickers unsupported)",
-            "message": f"“{display}” is not in the SEC ticker file."
+            "title": f"We couldn't find “{display}”",
+            "message": "Check the stock symbol (for example AAPL for Apple). Companies that "
+            "changed their symbol or stopped trading aren't supported."
             + (" Did you mean one of these?" if sugg else ""),
             "suggestions": sugg,
             "retry": False,
@@ -250,18 +252,18 @@ def classify_error(exc: BaseException, display: str) -> dict[str, Any]:
     if name == "UnsupportedFiler":
         reason = str(getattr(exc, "reason", None) or "This filer type is not covered.")
         return {
-            "title": "Unsupported filer type in v1",
-            "message": f"{reason.rstrip('.')}. VERITAS v1 covers US domestic filers with "
-            "10-K/10-Q XBRL.",
+            "title": "VERITAS can't check this kind of company yet",
+            "message": "It works with U.S. companies that file standard annual and quarterly "
+            f"reports. (Technical reason: {reason.rstrip('.')}.)",
             "suggestions": [],
             "retry": False,
             "glyph": "⊘",
         }
     if name == "NoXBRL":
         return {
-            "title": "No structured XBRL data for this filer",
-            "message": "SEC companyfacts returned nothing for this CIK, so the numeric checks "
-            "cannot run.",
+            "title": "This company's numbers aren't available in a form we can read",
+            "message": "The SEC has no machine-readable figures for this company, so the "
+            "number checks can't run.",
             "suggestions": [],
             "retry": False,
             "glyph": "⊘",
@@ -277,17 +279,17 @@ def classify_error(exc: BaseException, display: str) -> dict[str, Any]:
         }
     if _is_network_error(exc):
         return {
-            "title": "SEC EDGAR could not be reached",
-            "message": "SEC may be rate-limiting or temporarily unavailable, and no cached copy "
-            "of this filer exists yet. Try again in a few minutes.",
+            "title": "We couldn't reach the SEC's website",
+            "message": "It may be busy or briefly unavailable, and we don't have a saved copy of "
+            "this company yet. Try again in a few minutes.",
             "suggestions": [],
             "retry": True,
             "glyph": "↻",
         }
     return {
         "title": "The analysis could not be completed",
-        "message": f"Something went wrong while analyzing “{display}”. The details were "
-        "written to the log. Try again, or start with a seed ticker.",
+        "message": f"Something went wrong while checking “{display}”. Try again, or start "
+        "with one of the example companies.",
         "suggestions": [],
         "retry": True,
         "glyph": "↻",
@@ -320,10 +322,10 @@ def pending_blocked(settings: Settings, sample: bool) -> bool:
         return False
     st.session_state.pop("_pending", None)
     st.session_state["_run_error"] = {
-        "title": "Live mode is off: seed tickers only",
-        "message": "Without a valid VERITAS_SEC_USER_AGENT only the bundled seed tickers "
-        f"({', '.join(SEED_TICKERS)}) can be analyzed. Add a User-Agent with a contact "
-        "e-mail to .env to look up “" + display + "” live.",
+        "title": "Live lookups are off: example companies only",
+        "message": "This copy of VERITAS isn't set up for live lookups, so only the built-in "
+        f"examples ({', '.join(SEED_TICKERS)}) work. To look up “{display}”, the site owner "
+        "needs to set VERITAS_SEC_USER_AGENT (a contact name and e-mail for the SEC).",
         "suggestions": list(SEED_TICKERS),
         "retry": False,
         "glyph": "⏻",
@@ -369,16 +371,24 @@ def run_pending(settings: Settings, sample: bool) -> None:
         # elements on screen until the run ends (they would show as ghost
         # fragments). Rendered via Markdown so emptying the slot removes it.
         st.markdown(_HIDE_BODY, unsafe_allow_html=True)
-        with st.status(f"Analyzing {display}", expanded=True) as status:
+        simple = views.is_simple()
+        shown = sv.STAGES_PLAIN if simple else STAGES
+        verb = "Checking" if simple else "Analyzing"
+        with st.status(f"{verb} {display}", expanded=True) as status:
             holder = st.empty()
-            holder.markdown(c.progress_panel(STAGES, 0, "Starting"), unsafe_allow_html=True)
+            holder.markdown(
+                c.progress_panel(shown, 0, "" if simple else "Starting"), unsafe_allow_html=True
+            )
             state = {"idx": 0}
 
             def progress(message: str) -> None:
                 msg = str(message)
                 state["idx"] = _stage_index(msg, state["idx"])
-                holder.markdown(c.progress_panel(STAGES, state["idx"], msg), unsafe_allow_html=True)
-                status.update(label=f"Analyzing {display} · {STAGES[state['idx']]}")
+                holder.markdown(
+                    c.progress_panel(shown, state["idx"], "" if simple else msg),
+                    unsafe_allow_html=True,
+                )
+                status.update(label=f"{verb} {display} · {shown[state['idx']]}")
 
             try:
                 result, _hit = analyze_target(target, offline, refresh, progress, sample)
@@ -471,17 +481,21 @@ def _on_export_click() -> None:
 
 
 def topbar_markup(settings: Settings, sample: bool, result: Any) -> str:
+    simple = views.is_simple()
     chips: list[tuple[str, str]] = []
     if sample:
-        chips.append(("SYNTHETIC SAMPLE", "is-synthetic"))
+        chips.append(("Made-up sample data" if simple else "SYNTHETIC SAMPLE", "is-synthetic"))
     if result is not None:
-        chips.append(c.source_chip(c.get(result, "source"), c.get(result, "as_of")))
+        src, when = c.get(result, "source"), c.get(result, "as_of")
+        chips.append(sv.source_chip(src, when) if simple else c.source_chip(src, when))
     if settings.live_enabled and not sample:
-        chips.append(("SEC LIVE READY", "is-accent"))
+        chips.append(("Live lookups on" if simple else "SEC LIVE READY", "is-accent"))
     elif settings.offline:
-        chips.append(("OFFLINE MODE", ""))
+        chips.append(("Offline: examples only" if simple else "OFFLINE MODE", ""))
     else:
-        chips.append(("LIVE DISABLED · NO USER-AGENT", ""))
+        chips.append(("Examples only" if simple else "LIVE DISABLED · NO USER-AGENT", ""))
+    if simple:
+        return c.topbar(chips, "Checks what companies say against their own numbers")
     return c.topbar(chips)
 
 
@@ -491,7 +505,7 @@ def render_command_bar() -> None:
         raw = col_in.text_input(
             "Command",
             key="_cmd",
-            placeholder="Type any U.S. company's stock ticker, like NVDA, WMT or AAPL",
+            placeholder="Type any U.S. company's stock symbol, like AAPL, NVDA or WMT",
             label_visibility="collapsed",
         )
         submitted = col_btn.form_submit_button(
@@ -501,9 +515,19 @@ def render_command_bar() -> None:
         apply_command(parse_command(raw or ""))
     err = st.session_state.get("cmd_error")
     if err:
-        st.markdown(
-            c.command_error(f"{err} Valid commands:", VALID_COMMANDS), unsafe_allow_html=True
-        )
+        if views.is_simple():
+            st.markdown(
+                c.command_error(
+                    "That doesn't look like a stock symbol. Type one like AAPL, or tap one of "
+                    "the examples.",
+                    (),
+                ),
+                unsafe_allow_html=True,
+            )
+        else:
+            st.markdown(
+                c.command_error(f"{err} Valid commands:", VALID_COMMANDS), unsafe_allow_html=True
+            )
 
 
 def render_seed_cards() -> None:
@@ -538,17 +562,26 @@ def render_actions(settings: Settings, sample: bool) -> None:
             args=(ticker,),
             width="stretch",
         )
+    simple = views.is_simple()
     if sample:
         why = "Synthetic sample mode: live refresh is off."
     elif settings.offline:
         why = "Offline mode (VERITAS_OFFLINE=1): live refresh is off."
     elif settings.user_agent is None:
-        why = "Set VERITAS_SEC_USER_AGENT to enable live refresh."
+        why = (
+            "Live lookups are off on this copy of the site."
+            if simple
+            else "Set VERITAS_SEC_USER_AGENT to enable live refresh."
+        )
     else:
-        why = "Re-fetch this issuer from SEC EDGAR, bypassing the 1-hour cache."
+        why = (
+            "Fetch this company's newest reports from the SEC again."
+            if simple
+            else "Re-fetch this issuer from SEC EDGAR, bypassing the 1-hour cache."
+        )
     cur_ticker = st.session_state.get("ticker")
     cols[5].button(
-        "↻ Refresh live",
+        "↻ Latest data" if simple else "↻ Refresh live",
         key="_refresh",
         disabled=sample or not settings.live_enabled or not cur_ticker,
         help=why,
@@ -558,11 +591,15 @@ def render_actions(settings: Settings, sample: bool) -> None:
         width="stretch",
     )
     cols[6].button(
-        "⇩ Export PDF",
+        "⇩ PDF report" if simple else "⇩ Export PDF",
         key="_export",
         on_click=_on_export_click,
         width="stretch",
-        help="Build the 2-page tear-sheet (same as the EXPORT command).",
+        help=(
+            "A 2-page summary to save or share (it uses the detailed, technical wording)."
+            if simple
+            else "Build the 2-page tear-sheet (same as the EXPORT command)."
+        ),
     )
 
 
@@ -575,7 +612,7 @@ def render_export_strip() -> None:
         left, right = st.columns([4, 1.4], vertical_alignment="center")
         left.markdown(
             c.one_line(
-                '<div class="vx"><span class="vx-label">Tear-sheet ready</span>'
+                '<div class="vx"><span class="vx-label">PDF report ready</span>'
                 f'<div class="vx-mono" style="margin-top:4px">{c.esc(name)} · '
                 f"{len(data) / 1024:,.0f} KB · PDF</div></div>"
             ),
@@ -603,6 +640,16 @@ def render_banners(settings: Settings, sample: bool, result: Any) -> None:
             ),
             unsafe_allow_html=True,
         )
+    elif settings.user_agent is None and views.is_simple():
+        st.markdown(
+            c.banner(
+                "Live lookups are off on this copy of the site, so only the four example "
+                "companies (NVDA, WMT, TSLA, BA) work.",
+                kind="info",
+                title="Examples only",
+            ),
+            unsafe_allow_html=True,
+        )
     elif settings.user_agent is None:
         st.markdown(
             c.banner(
@@ -617,8 +664,10 @@ def render_banners(settings: Settings, sample: bool, result: Any) -> None:
             unsafe_allow_html=True,
         )
     if result is not None:
+        simple = views.is_simple()
         for text in c.as_list(c.get(result, "banners")):
-            st.markdown(c.banner(str(text), kind="notice", title="Notice"), unsafe_allow_html=True)
+            shown = sv.banner_plain(text) if simple else str(text)
+            st.markdown(c.banner(shown, kind="notice", title="Notice"), unsafe_allow_html=True)
 
 
 def render_run_error() -> None:
@@ -661,18 +710,42 @@ def _dismiss_error() -> None:
     st.session_state["_run_error"] = None
 
 
+def render_detail_toggle() -> None:
+    """Simple view is the default; this switch turns on the analyst view (D-612)."""
+    with st.container(key="detailbar"):
+        _, right = st.columns([5, 1.6], vertical_alignment="center")
+        right.toggle(
+            "Analyst detail",
+            key="_detail",
+            help="Show the technical view: formulas, raw figures, filing codes and check names.",
+        )
+
+
 # ---------------------------------------------------------------------------
 # Footer
 # ---------------------------------------------------------------------------
 
 
 def render_footer() -> None:
-    st.markdown(c.footer(DISCLAIMER, APP_VERSION), unsafe_allow_html=True)
+    if views.is_simple():
+        st.markdown(sv.footer(APP_VERSION), unsafe_allow_html=True)
+    else:
+        st.markdown(c.footer(DISCLAIMER, APP_VERSION), unsafe_allow_html=True)
+    simple = views.is_simple()
+    # In the simple view the company page already has the glossary above the score.
+    if not (simple and st.session_state.get("result") is not None):
+        with st.expander(
+            "Jargon buster: the terms on this page, in plain English",
+            icon=":material/translate:",
+        ):
+            st.markdown(
+                story.glossary_html(sv.GLOSSARY_SIMPLE if simple else None),
+                unsafe_allow_html=True,
+            )
     with st.expander(
-        "Jargon buster: the terms on this page, in plain English", icon=":material/translate:"
+        "How the checks work (technical)" if views.is_simple() else "Methodology",
+        icon=":material/menu_book:",
     ):
-        st.markdown(story.glossary_html(), unsafe_allow_html=True)
-    with st.expander("Methodology", icon=":material/menu_book:"):
         try:
             text = METHODOLOGY_PATH.read_text(encoding="utf-8")
         except OSError:
@@ -713,6 +786,7 @@ def run() -> None:
     # Top bar and hero are placeholders filled after any queued analysis has run,
     # so the whole page reflects the new result in this same run.
     topbar_slot = st.empty()
+    render_detail_toggle()
     hero_slot = st.empty()
     render_command_bar()  # may queue an analysis or set cmd_error
     pending_blocked(settings, sample)
@@ -734,7 +808,11 @@ def run() -> None:
             views.render_landing()
     else:
         with st.container(key="body"):
-            st.markdown(c.identity(result, sample), unsafe_allow_html=True)
+            simple = views.is_simple()
+            st.markdown(
+                sv.identity(result, sample) if simple else c.identity(result, sample),
+                unsafe_allow_html=True,
+            )
             render_banners(settings, sample, result)
             with st.container(key="viewbar"):
                 st.radio(
@@ -743,6 +821,7 @@ def run() -> None:
                     key="view",
                     horizontal=True,
                     label_visibility="collapsed",
+                    format_func=(lambda v: sv.VIEW_PLAIN.get(v, v)) if simple else str,
                 )
             views.render_view(str(st.session_state.get("view")), result)
     render_footer()

@@ -63,8 +63,12 @@ def sample_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("VERITAS_UI_SAMPLE", "1")
 
 
-def _app() -> AppTest:
-    return AppTest.from_file(APP, default_timeout=60)
+def _app(detail: bool = True) -> AppTest:
+    """Most tests here check the analyst (technical) view; the simple view, which is the
+    default for visitors, has its own tests in test_simple_view.py."""
+    at = AppTest.from_file(APP, default_timeout=60)
+    at.session_state["_detail"] = detail
+    return at
 
 
 def _text(at: AppTest) -> str:
@@ -205,7 +209,7 @@ def test_live_off_blocks_non_seed_ticker(monkeypatch: pytest.MonkeyPatch) -> Non
     _submit(at, "ZZZZ")
     assert not at.exception
     err = at.session_state["_run_error"]
-    assert err and "seed tickers only" in err["title"]
+    assert err and "example companies only" in err["title"]
     assert {"_sugg_NVDA", "_dismiss"} <= {b.key for b in at.button}
 
 
@@ -222,9 +226,9 @@ def test_classify_error_messages() -> None:
         pass
 
     e = classify_error(TickerNotFound(["AAPL", "AAP", "A", "AA", "AAL", "AAON"]), "AAPX")
-    assert "Ticker not found" in e["title"] and len(e["suggestions"]) == 5
-    assert "Unsupported filer type in v1" in classify_error(UnsupportedFiler(), "X")["title"]
-    assert "No structured XBRL" in classify_error(NoXBRL(), "X")["title"]
+    assert "couldn't find" in e["title"] and len(e["suggestions"]) == 5
+    assert "can't check this kind" in classify_error(UnsupportedFiler(), "X")["title"]
+    assert "in a form we can read" in classify_error(NoXBRL(), "X")["title"]
     assert classify_error(ImportError("x"), "X")["title"].startswith("Analysis engine")
     assert classify_error(TimeoutError("SEC 503"), "X")["retry"] is True
 
@@ -309,20 +313,20 @@ def test_ticker_not_found_single_panel_cleared_by_next_command(
     _submit(at, "NVD")
     assert not at.exception
     text = _text(at)
-    assert text.count("Ticker not found") == 1
+    assert text.count("find “NVD”") == 1
     assert {"_sugg_NVDA", "_sugg_NVDS"} <= {b.key for b in at.button}
     _submit(at, "what is this")
     assert at.session_state["_run_error"] is None
-    assert "Ticker not found" not in _text(at)
+    assert "find “NVD”" not in _text(at)
 
 
 def test_classify_error_network_vs_generic() -> None:
     from veritas.edgar.client import SecBlocked, SecUnavailable
 
     for exc in (SecBlocked("403"), SecUnavailable("503")):
-        assert "rate-limiting" in classify_error(exc, "X")["message"]
+        assert "briefly unavailable" in classify_error(exc, "X")["message"]
     generic = classify_error(ValueError("KeyError: 'foo' at engine/x.py:12"), "X")
-    assert "rate-limiting" not in generic["message"]
+    assert "briefly unavailable" not in generic["message"]
     assert "foo" not in generic["message"] and "engine" not in generic["message"]
 
 

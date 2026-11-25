@@ -50,11 +50,11 @@ def test_static_copy_has_no_banned_words() -> None:
 @pytest.mark.parametrize(
     ("score", "start"),
     [
-        (100, "The story"),
-        (85, "The story"),
+        (100, "Few flags"),
+        (85, "Few flags"),
         (84, "A mixed"),
         (60, "A mixed"),
-        (59, "Several"),
+        (59, "Many flags"),
         (None, "Not enough"),
     ],
 )
@@ -97,7 +97,7 @@ def test_more_cash_than_profit_wording() -> None:
     check = {
         "check_id": "A3_ACCRUALS",
         "period_end": "2026-06-30",
-        "outputs": {},
+        "outputs": {"ccr": 1.5},
         "inputs": {"NI_ttm": 100e6, "OCF_ttm": 150e6},
     }
     s = plain.numbers_sentence(check, "Acme")
@@ -216,10 +216,10 @@ def test_b3_c1_compares_amounts_correctly() -> None:
     }
     s1, s2 = plain.incentive_plain(more), plain.incentive_plain(half)
     assert s1 and "more than the $16M" in s1 and "all employees" in s1
-    assert s2 and "equal to about 60% of the $1.0B" in s2 and "more than" not in s2
+    assert s2 and "at least half of the $1.0B" in s2 and "more than" not in s2
     for s in (s1, s2):
         assert "it paid" not in s and "often leaves out" not in s
-        assert "did not check what this company's figure excludes" in s
+        assert "did not check whether this company's figure does" in s
 
 
 def test_b4_matched_term_not_overclaimed() -> None:
@@ -248,7 +248,8 @@ def test_b5_no_data_checks_are_not_listed_as_passing(ticker: str) -> None:
             continue
         if k.state != "COMPUTED" or _has_no_data(k):
             assert cp.name not in v.good, (ticker, k.check_id)
-            assert any(u.startswith(cp.name) for u in v.unchecked), (ticker, k.check_id)
+            listed = (*v.unchecked, *v.empty, *v.not_applicable)
+            assert any(u.startswith(cp.name) for u in listed), (ticker, k.check_id)
 
 
 def test_trend_uses_displayed_values() -> None:
@@ -261,15 +262,16 @@ def test_trend_uses_displayed_values() -> None:
 @pytest.mark.parametrize(
     ("reason", "expected"),
     [
-        ("receivables immaterial (AR < 2% of TTM revenue)", "customer balances"),
-        ("inventory immaterial (inventory < 2% of TTM cost of sales)", "inventory is under 2%"),
-        ("capitalized software immaterial (< 1% of TTM revenue)", "under 1% of yearly sales"),
-        ("no inventory tag reported", "no inventory figure"),
-        ("capitalized software not tagged", "doesn't report this figure separately"),
+        ("receivables immaterial (AR < 2% of TTM revenue)", "customers owe it less than 2%"),
+        ("inventory immaterial (inventory < 2% of TTM cost of sales)", "unsold goods are worth"),
+        ("capitalized software immaterial (< 1% of TTM revenue)", "under 1% of a year's sales"),
+        ("no inventory tag reported", "figure for unsold goods"),
+        ("capitalized software not tagged", "couldn't find this figure"),
         ("TTM net income unavailable (4 discrete quarters required)", "not enough quarters"),
         ("Assets not tagged at 2026-06-30", "isn't in the company's data"),
         ("TTM revenue unavailable for the materiality gate", "isn't in the company's data"),
-        ("financial issuer", "the figures needed aren't available"),
+        ("financial issuer", "doesn't apply to banks"),
+        ("something new from the engine", "the figures needed aren't available"),
     ],
 )
 def test_n1_each_engine_reason_gets_its_own_plain_text(reason: str, expected: str) -> None:
@@ -288,4 +290,115 @@ def test_verdict_accepts_dict_results() -> None:
         "inputs": {},
     }
     v = plain.verdict({"ticker": "XYZ", "modules": {"A": {"checks": [check], "findings": []}}})
-    assert v.good == ("Repeated restructuring costs",)
+    assert v.good == ("Repeated “one-time” costs",)
+
+
+# --- Fable review 2 (D-613) ---------------------------------------------------------
+
+
+@seeded
+@pytest.mark.parametrize("ticker", SEED_TICKERS)
+def test_check_lists_agree_with_coverage(ticker: str) -> None:
+    """'Number checks run: N of M' must match what the summary lists."""
+    r = _r(ticker)
+    v = plain.verdict(r, footnote_edits(r.modules["B"]))
+    scored = [k for k in r.modules["A"].checks if k.check_id.startswith("A") and k.scored]
+    flagged = [k for k in scored if k.state == "COMPUTED" and k.severity != "NO_FLAG"]
+    a_unchecked = [u for u in v.unchecked if not u.startswith("How executives")]
+    assert len(v.good) + len(v.empty) + len(flagged) == r.score.coverage_num
+    assert len(a_unchecked) == r.score.coverage_den - r.score.coverage_num
+    assert len(v.not_applicable) == len(scored) - r.score.coverage_den
+
+
+def test_no_inventory_tag_is_not_called_unreported() -> None:
+    out = plain._reason_plain("no inventory tag reported")
+    assert "doesn't report" not in out and "couldn't find" in out
+
+
+def _a3(ni: float, ocf: float, **outputs: object) -> dict[str, object]:
+    return {
+        "check_id": "A3_ACCRUALS",
+        "period_end": "2026-06-30",
+        "severity": outputs.pop("severity", "CRITICAL"),
+        "annotations": outputs.pop("annotations", ()),
+        "outputs": outputs,
+        "inputs": {"NI_ttm": ni, "OCF_ttm": ocf},
+    }
+
+
+def test_a3_loss_and_cash_burn_wording() -> None:
+    s = plain.numbers_sentence(_a3(-1e9, -4e8), "Acme") or ""
+    assert "a loss of $1.0B" in s and "used up $400.0M of cash" in s
+    assert "−" not in s and "-$" not in s and "¢" not in s
+
+
+def test_a3_uses_engine_ratio_only() -> None:
+    # profit under 2% of sales: the engine leaves ccr None, so no cents are printed
+    s = plain.numbers_sentence(_a3(1e8, 5e7, ccr=None, accrual_ratio=0.001), "Acme") or ""
+    assert "¢" not in s and "about 0%" not in s
+
+
+def test_a3_profit_up_cash_down_is_explained() -> None:
+    s = plain.numbers_sentence(
+        _a3(
+            1e8,
+            1.2e8,
+            ccr=1.2,
+            OCF_ttm_growth=-0.25,
+            annotations=("net income up YoY while operating cash flow fell ≥ 10%",),
+        ),
+        "Acme",
+    )
+    assert s and "more cash than profit" in s and "fell by about 25%" in s
+
+
+def test_a4_flag_has_a_sentence_and_is_never_dropped() -> None:
+    check = {
+        "check_id": "A4_CAPRATE",
+        "period_end": "2026-06-30",
+        "state": "COMPUTED",
+        "severity": "WARNING",
+        "scored": True,
+        "outputs": {"cap_rate": 0.32, "cap_rate_prior_year": 0.25, "cap_rate_change_pp": 0.07},
+        "inputs": {},
+    }
+    s = plain.numbers_sentence(check, "Acme") or ""
+    assert "about 32%" in s and "up 7 percentage points" in s and "(25%)" in s
+    finding = {"category": "accounting", "severity": "WARNING", "check": check, "id": "A4"}
+    v = plain.verdict(
+        {"ticker": "XYZ", "modules": {"A": {"checks": [check], "findings": [finding]}}}
+    )
+    assert [p.title for p in v.points] == [plain.CHECK_PLAIN["A4_CAPRATE"].name]
+
+
+def test_unscored_flag_is_not_a_point() -> None:
+    check = {
+        "check_id": "A3_ACCRUALS",
+        "state": "COMPUTED",
+        "severity": "WARNING",
+        "scored": False,
+        "outputs": {},
+        "inputs": {"NI_ttm": 1.0, "OCF_ttm": 0.5},
+    }
+    finding = {"category": "accounting", "severity": "WARNING", "check": check, "id": "A3"}
+    v = plain.verdict(
+        {"ticker": "XYZ", "modules": {"A": {"checks": [check], "findings": [finding]}}}
+    )
+    assert v.points == ()
+
+
+def test_trend_never_contradicts_engine_change() -> None:
+    # displayed 26 vs 17 would say "up 9", but the engine's change is 9.8 points
+    assert plain._trend(26.4, 16.6, "percentage points", delta=9.8) == (
+        "up 9.8 percentage points from"
+    )
+    assert plain._trend(26.4, 17.45, "percentage points", delta=8.95) == (
+        "up 9 percentage points from"
+    )
+    assert plain._trend(119.33, 105.63, "days", delta=13.7) == "up 13.7 days from"
+    assert plain._trend(40.2, 39.9, "days", delta=0.3) == "about the same as"
+
+
+def test_ccr_just_under_one_reads_as_much_cash() -> None:
+    s = plain.numbers_sentence(_a3(1e8, 9.97e7, ccr=0.997), "Acme") or ""
+    assert "100¢" not in s and "about as much cash as profit" in s

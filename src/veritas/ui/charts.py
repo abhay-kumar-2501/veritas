@@ -175,6 +175,7 @@ def _add_zones(
     hi: float,
     fmt: str,
     unit: str,
+    simple: bool = False,
 ) -> float:
     """Shared WARNING / CRITICAL zone traces, so every chart has the same legend."""
     peak = max(hi, max(crit))
@@ -185,8 +186,13 @@ def _add_zones(
             y=warn,
             mode="lines",
             line={"color": WARN_LINE, "width": 1, "dash": "dot"},
-            name="WARNING zone",
-            hovertemplate="warn ≥ %{y:" + fmt + "}" + unit + "<extra></extra>",
+            name="Worth a closer look" if simple else "WARNING zone",
+            hovertemplate=("closer look from " if simple else "warn ≥ ")
+            + "%{y:"
+            + fmt
+            + "}"
+            + unit
+            + "<extra></extra>",
         )
     )
     fig.add_trace(
@@ -197,8 +203,13 @@ def _add_zones(
             fill="tonexty",
             fillcolor=WARN_FILL,
             line={"color": CRIT_LINE, "width": 1, "dash": "dot"},
-            name="CRITICAL zone",
-            hovertemplate="crit ≥ %{y:" + fmt + "}" + unit + "<extra></extra>",
+            name="Big gap" if simple else "CRITICAL zone",
+            hovertemplate=("big gap from " if simple else "crit ≥ ")
+            + "%{y:"
+            + fmt
+            + "}"
+            + unit
+            + "<extra></extra>",
         )
     )
     fig.add_trace(
@@ -216,7 +227,9 @@ def _add_zones(
     return max(hi, top)
 
 
-def check_figure(check_id: str, title: str, history: Sequence[Any]) -> go.Figure | None:
+def check_figure(
+    check_id: str, title: str, history: Sequence[Any], simple: bool = False
+) -> go.Figure | None:
     """Line chart of the last 12 quarters plus the threshold band, or None if
     there are fewer than two numeric points."""
     pts = history_points(history)
@@ -242,7 +255,7 @@ def check_figure(check_id: str, title: str, history: Sequence[Any]) -> go.Figure
         warn = [t("ACCRUAL_WARN")] * len(bx)
         crit = [t("ACCRUAL_CRIT")] * len(bx)
     if bx:
-        hi = _add_zones(fig, bx, warn, crit, hi, fmt, unit)
+        hi = _add_zones(fig, bx, warn, crit, hi, fmt, unit, simple)
 
     fig.add_trace(
         go.Scatter(
