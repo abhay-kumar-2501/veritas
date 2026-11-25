@@ -611,7 +611,7 @@ def headline_for(score: Any, label: Any = None) -> str:
     if s is None:
         return "Not enough data to give a score."
     if s >= 85:
-        return "Few flags: little stood out."
+        return "Only a few flags raised."
     if s >= 60:
         return "A mixed picture: some things worth a closer look."
     return "Many flags: several things worth a closer look."

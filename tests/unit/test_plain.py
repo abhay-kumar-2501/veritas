@@ -50,8 +50,8 @@ def test_static_copy_has_no_banned_words() -> None:
 @pytest.mark.parametrize(
     ("score", "start"),
     [
-        (100, "Few flags"),
-        (85, "Few flags"),
+        (100, "Only a few"),
+        (85, "Only a few"),
         (84, "A mixed"),
         (60, "A mixed"),
         (59, "Many flags"),
